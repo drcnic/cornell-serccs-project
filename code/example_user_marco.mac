@@ -1,0 +1,1181 @@
+CONT_SCREW_TOL = 0.001 #tolerance on relative screw head position for stopping continuous loading
+
+DIC_EXPTIME = 0.25
+DIC_OME = 12.502
+DIC_Z =  3.2435
+
+FF_START = 0.0
+FF_DEG = 360.0
+FF_EXPTIME = 0.25
+FF_ATTEN = 7.5
+FF_NIMAGES = 1440
+FF_HEIGHT = 0.1
+FF_WIDTH = 2.2
+
+ECHECK_HEIGHT = 1
+ECHECK_WIDTH = 2
+ECHECK_TIME = 1
+ECHECK_IC0_GAIN = 11
+ECHECK_IC1_GAIN = 11
+
+NF_START= 0.0
+NF_DEG = 360 
+NF_EXPTIME = 3
+NF_ATTEN = 0
+NF_NIMAGES = 1440
+NF_HEIGHT = 0.1
+NF_WIDTH = 2.2
+
+TOMO_EXPTIME = 1
+TOMO_ATTEN = 0
+TOMO_IMAGES = 1440
+TOMO_START= 0.0
+TOMO_DEG= 360.0 
+TOMO_HEIGHT = 1.2
+TOMO_WIDTH = 2.2
+
+RAD_EXPTIME = 1
+RAD_ATTEN = 0.25
+RAD_OME = 1.3558
+RAD_Z= 0.16
+RAD_HEIGHT = 3
+
+###################################
+### custom continuous far-field ###
+###################################
+
+#handle rams loading and dexela files s.t. dexelas are framing before load screw starts moving
+def sync_ct_custom '{
+
+    local npoints, ctime, j, _npoints, screwdisp, screwvel, max_strain, strain_rate, sample_height, compression_time, compression_npoints, extra_frames
+
+    if (($#<5) || ($#>5)) {
+       eprint "Usage: sync_ct_custom [max strain] [strain rate] [sample height [mm]] [exposure time [s]] [extra frames]"
+       exit 
+    }
+
+    rams_force_off
+    sleep(10)
+
+    max_strain = $1
+    strain_rate = $2
+    sample_height = $3
+    ctime = $4
+    extra_frames = $5
+
+    screwdisp = max_strain*sample_height
+    screwvel = strain_rate*sample_height
+    compression_time = fabs(max_strain/strain_rate) #time it will take to do the requested compression
+    compression_npoints = compression_time/ctime #number of frames it will take to do the requested compression
+    npoints = compression_npoints + extra_frames
+
+    eprint sprintf("will move the screw %g mm at %g mm/s",screwdisp,screwvel)
+
+    HEADING = sprintf("sync_ct_custom %g %g %g %g", $1, $2, $3, $4)
+    
+    X_L = "Time (s)"
+    Y_L = cnt_name(DET)
+
+    _npoints = int(npoints)
+
+    eprint sprintf("about to program the delay generator for %d frames",_npoints) 
+
+    get_angles
+    _slew_set(ctime, _npoints+1) #+1 kludgey fix dcp to get pulse train right
+    comment "done programming the delay generator" 
+    sync_ct_head
+    NPTS = _npoints #DO NOT REMOVE THIS OR MOVE IT, IT MUST BE DEFINED HERE
+
+    comment "sync_ct_custom %g %g" "_npoints, ctime"
+    #used to be _sync_ct:
+    cdef("cleanup_once", "sync_ct_abort;", "_sync_ct_cleanup_")
+    
+    sync_user_scan_head
+
+    opens
+
+    comment "sending triggers to start framing"
+    aux_trigger_on
+    sleep(10*ctime)   #make sure we send a few triggers before the screw head moves
+    #start moving the screw in compression:
+    
+    comment "starting screw motion"
+    mvr_screw screwdisp 0 screwvel 0.02
+
+    sleep((_npoints-10)*ctime) #real frames minus ten
+    sleep(10*ctime)     #final frames
+    aux_trigger_off    
+    comment "done with triggers"
+    sleep(1)
+    closes
+    sync_user_scan_tail
+   
+    set_daqdir_no_scan
+
+}'
+
+
+#################
+### far-field ###
+#################
+
+def do_ff_scan_layers '{
+    local j, nlayers, layersize, z_center
+    
+    if ($# != 3) {
+        eprint "Usage:  do_ff_scan_layers nlayers layersize z_center"
+        exit
+    }
+    
+    nlayers = $1
+    layersize = $2
+    z_center = $3
+    
+    if (SYNC_FF_MODE != 1) {
+        eprint "not in far-field mode"
+        exit
+    }
+
+    comment "=== beginning ff/load series ==="
+ 
+    set_beam_height FF_HEIGHT # just to be sure
+    set_beam_width FF_WIDTH # just to be sure
+    atten FF_ATTEN # just to be sure
+
+    for (j=0; j<nlayers; j++) {
+        comment "=== Processing layer %g ==" "j+1"
+        umv ramsz (layersize*(-(nlayers/2)+1/2+j)+z_center)
+
+        slew_ome FF_START (FF_START+FF_DEG) FF_NIMAGES FF_EXPTIME
+    }
+    
+    umv ome FF_START
+}'
+
+def continuous_ff '{
+    local k, rel_disp, rel_vel, rel_accel, crosshead_i, crosshead_now
+
+    if ($# != 3) {
+        eprint "Usage:  continuous_ff disp vel accel"
+        exit
+    }    
+    cdef("cleanup_once", "continuous_ff_abort;", "_continuous_ff_cleanup_")    
+    
+    rel_disp = $1
+    rel_vel = $2
+    rel_accel = $3    
+    
+    if (SYNC_FF_MODE != 1) {
+        eprint "not in far-field mode"
+        exit
+    }
+
+    
+    atten FF_ATTEN
+    set_beam_height FF_HEIGHT	
+    set_beam_width FF_WIDTH
+    
+    comment "runnning energy check"
+    ic_gain_check
+    atten FF_ATTEN
+    set_beam_height FF_HEIGHT	
+    set_beam_width FF_WIDTH
+
+    comment "collecting no load scan"    
+
+    
+    slew_ome FF_START (FF_START+FF_DEG) FF_NIMAGES FF_EXPTIME
+    crosshead_i = _wm_screw()
+    comment "Initial rams screw position is %g" "crosshead_i"
+    mvr_screw rel_disp 0 rel_vel rel_accel 
+    comment "movement started"    
+    crosshead_now = crosshead_i
+    
+    if (rel_disp > 0) {
+        while ((crosshead_now - crosshead_i) < (rel_disp-CONT_SCREW_TOL)){        
+            comment "rams force is %g" "_wm_force()"
+            comment "rams screw position is %g" "_wm_screw()" 
+	    comment "rams screw has moved %g from initial position" "(crosshead_now - crosshead_i)"        
+            comment "collecting scan"
+
+            slew_ome FF_START (FF_START+FF_DEG) FF_NIMAGES FF_EXPTIME        
+            umv ome FF_START
+            crosshead_now = _wm_screw()  
+            if (((crosshead_now -crosshead_i)> (rel_disp-CONT_SCREW_TOL)) || ((crosshead_now-crosshead_i) == rel_disp)) {
+                mv_screw_abort
+                comment "rams force is %g" "_wm_force()"
+                comment "rams screw position is %g" "_wm_screw()" 
+		comment "rams screw has moved %g from initial position" "(crosshead_now - crosshead_i)"        
+                comment "continuous_ff done"
+                exit
+            }          
+        }
+        
+    } else if (rel_disp < 0) {
+        while ((crosshead_now - crosshead_i) > (rel_disp+CONT_SCREW_TOL)){        
+            comment "rams force is %g" "_wm_force()"
+            comment "rams screw position is %g" "_wm_screw()"        
+            comment "collecting scan"
+            slew_ome FF_START (FF_START+FF_DEG) FF_NIMAGES FF_EXPTIME        
+            umv ome FF_START
+            crosshead_now = _wm_screw()
+            if (((crosshead_now-crosshead_i) < (rel_disp+CONT_SCREW_TOL)) || ((crosshead_now-crosshead_i) == rel_disp)) {
+                mv_screw_abort
+                comment "rams force is %g" "_wm_force()"
+                comment "rams screw position is %g" "_wm_screw()" 
+		comment "rams screw has moved %g from initial position" "(crosshead_now - crosshead_i)"        
+                comment "continuous_ff done"                
+                exit
+            }           
+        
+        }
+    }
+    mv_screw_abort    
+}'
+
+def continuous_ff_layers '{
+    local k, rel_disp, rel_vel, rel_accel, crosshead_i, crosshead_now, nlayers, layersize, z_center, exit_loop
+
+    if ($# != 6) {
+        eprint "Usage:  continuous_ff disp vel accel nlayers layersize z_center "
+        exit
+    }    
+    cdef("cleanup_once", "continuous_ff_abort;", "_continuous_ff_cleanup_")    
+    
+    rel_disp = $1
+    rel_vel = $2
+    rel_accel = $3  
+    nlayers = $4
+	layersize = $5
+	z_center = $6
+    
+    if (SYNC_FF_MODE != 1) {
+        eprint "not in far-field mode"
+        exit
+    }
+
+    
+    atten FF_ATTEN
+    set_beam_height FF_HEIGHT	
+    set_beam_width FF_WIDTH
+    
+    comment "runnning energy check"
+    ic_gain_check
+    atten FF_ATTEN
+    set_beam_height FF_HEIGHT	
+    set_beam_width FF_WIDTH
+
+    comment "collecting no load scan"    
+
+	for (j=0; j<nlayers; j++) {
+        comment "=== Processing layer %g ==" "j+1"
+        umv ramsz (layersize*(-(nlayers/2)+1/2+j)+z_center)
+        slew_ome FF_START (FF_START+FF_DEG) FF_NIMAGES FF_EXPTIME
+    }
+    umv ome FF_START
+    
+    crosshead_i = _wm_screw()
+    comment "Initial rams screw position is %g" "crosshead_i"
+    mvr_screw rel_disp 0 rel_vel rel_accel 
+    comment "movement started"    
+    crosshead_now = crosshead_i
+    
+    if (rel_disp > 0) { #tension case
+        exit_loop = 0
+        while (((crosshead_now - crosshead_i) < (rel_disp-CONT_SCREW_TOL)) && (exit_loop == 0)) {        
+            comment "rams force is %g" "_wm_force()"
+            comment "rams screw position is %g" "_wm_screw()" 
+	    comment "rams screw has moved %g from initial position" "(crosshead_now - crosshead_i)"      
+            comment "collecting scan"
+
+	    #every time we go back to layer 1 we will adjust ramsz to compensate for the screw motion:
+	    crosshead_diff = fabs(crosshead_now-crosshead_i) 
+	    z_center = z_center + crosshead_diff #note this will only move ramsz up, need to fix for tension
+
+            for (j=0; j<nlayers; j++) {
+		comment "=== Processing layer %g ==" "j+1"
+		umv ramsz (layersize*(-(nlayers/2)+1/2+j)+z_center)
+		slew_ome FF_START (FF_START+FF_DEG) FF_NIMAGES FF_EXPTIME
+		}
+		umv ome FF_START
+			
+            crosshead_now = _wm_screw()  
+            if (((crosshead_now - crosshead_i) > (rel_disp-CONT_SCREW_TOL)) || ((crosshead_now - crosshead_i) == rel_disp)) {
+                mv_screw_abort
+                comment "Target displacement reached" 
+                comment "rams force is %g" "_wm_force()"
+                comment "rams disp is %g" "_wm_screw()"        
+                comment "continuous_ff done"
+                exit_loop = 1
+            }          
+        }
+        
+    } else if (rel_disp < 0) { #compression case
+        exit_loop = 0
+        while (((crosshead_now - crosshead_i) > (rel_disp+CONT_SCREW_TOL)) && (exit_loop == 0)) {        
+            comment "rams force is %g" "_wm_force()"
+            comment "rams screw position is %g" "_wm_screw()" 
+	    comment "rams screw has moved %g from initial position" "(crosshead_now - crosshead_i)"        
+            comment "collecting scan"
+			
+	    #every time we go back to layer 1 we will adjust ramsz to compensate for the screw motion
+	    crosshead_diff = fabs(crosshead_now-crosshead_i) 
+	    z_center = z_center + crosshead_diff  
+			
+            for (j=0; j<nlayers; j++) {
+		comment "=== Processing layer %g ==" "j+1"
+		umv ramsz (layersize*(-(nlayers/2)+1/2+j)+z_center)
+		slew_ome FF_START (FF_START+FF_DEG) FF_NIMAGES FF_EXPTIME
+		}
+		umv ome FF_START
+			
+            crosshead_now = _wm_screw()
+            if (((crosshead_now - crosshead_i)< (rel_disp+CONT_SCREW_TOL)) || ((crosshead_now - crosshead_i) == rel_disp)){
+                mv_screw_abort
+                comment "Target displacement reached" 
+                comment "rams force is %g" "_wm_force()"
+                comment "rams screw position is %g" "_wm_screw()" 
+		comment "rams screw has moved %g from initial position" "(crosshead_now - crosshead_i)"       
+                comment "continuous_ff done"                
+                exit_loop = 1
+            }           
+        
+        }
+    }
+    mv_screw_abort    
+}'
+
+def continuous_ff_abort '{
+    mv_screw_abort
+}'
+
+
+####################
+### energy check ###
+####################
+
+def ic_gain_check '{
+    local ic0_gain, ic1_gain, _height, _width, current_atten
+    
+    closes
+    
+    ### obtaining current ic gains, slit and attenuation settings ###
+    ic0_gain = _get_ic_gain(ic0)
+    ic1_gain = _get_ic_gain(ic1)
+    _height = _get_beam_height()
+    _width = _get_beam_width()
+    current_atten = _watt()
+    #################################
+    
+    ### setting ic gains same as the energy scan ###
+    set_ic_gain ic0 ECHECK_IC0_GAIN
+    set_ic_gain ic1 ECHECK_IC1_GAIN
+    ##################################################
+    
+    close_garage_door
+    set_beam_height ECHECK_HEIGHT    
+    set_beam_width ECHECK_WIDTH    
+    rm_att        
+    find_foil
+    comment "ic counts with same gain settings as the energy scan: brightfield"        
+    beamstop_open_check
+    opens
+    tseries 1 ECHECK_TIME
+    closes        
+    echeck_write_to_par
+    
+    ### setting ic gain back ###
+    set_ic_gain ic0 ic0_gain
+    set_ic_gain ic1 ic1_gain
+    set_beam_height _height
+    set_beam_width _width
+    atten current_atten
+    open_garage_door
+}'
+
+
+def echeck_write_to_par '{
+    local par_fname  
+    
+    par_fname = sprintf("%s/%s/energy_log.par",DAQROOT,SAMPLEID)
+    open(par_fname)     
+    fprintf(par_fname, "\n%s %d %g %g %g", date(), SCAN_N, S[ic0], S[ic1], epics_get("CESR_BR_CURR"))
+    close(par_fname)    
+}'
+
+
+
+##################
+### near-field ###
+##################
+
+def do_nf_scan_layers '{
+    local j nlayers layersize z_center
+
+    if ($# != 3) {
+        eprint "Usage:  do_nf_scan_layers nlayers layersize z_center"
+        exit
+    }   
+
+    nlayers = $1
+    layersize = $2
+    z_center = $3
+
+    if (SYNC_NF_MODE != 1) {
+        eprint "not in near-field mode"
+        exit
+    }
+
+    atten NF_ATTEN
+
+    umv nfbsz 0 #just in case
+    
+    set_beam_height NF_HEIGHT
+    set_beam_width NF_WIDTH
+    
+#    while (yesno("Cover on the Parker controller?", 0) == 0) {
+#        continue
+#    }        
+
+    comment "=== near-field scan ==="
+  
+    for (j=0; j<nlayers; j++) {
+        comment "=== Processing layer %g ==" "j+1"
+        umv ramsz (layersize*(-(nlayers/2)+1/2+j)+z_center)
+        slew_ome NF_START (NF_START+NF_DEG) NF_NIMAGES NF_EXPTIME
+    }
+}'
+
+
+
+##################
+### tomography ###
+##################
+
+def tomo_sequence '{
+    local par_fname, tomo_par_col, tomo_par_col_json, tomo_par_col_json_fname, tomo_type, tomo_type_json, tomo_type_json_fname
+    par_fname = sprintf("%s/%s/tomo_series.par",DAQROOT,SAMPLEID)
+
+    tomo_par_col[0] = "date"
+    tomo_par_col[1] = "time"
+    tomo_par_col[2] = "epoch"
+    tomo_par_col[3] = "SCAN_N"
+    tomo_par_col[4] = "junkstart"
+    tomo_par_col[5] = "goodstart"    
+    tomo_par_col[6] = "load"
+    tomo_par_col[7] = "screw"
+    tomo_par_col[8] = "ramsz"
+    tomo_par_col[9] = "tomotype"
+    tomo_par_col_json = encode("json",tomo_par_col)
+    tomo_par_col_json_fname = sprintf("%s/%s/tomo_series.json", DAQROOT, SAMPLEID)
+    if (file_info(tomo_par_col_json_fname, "-e") != 1) {
+        open(tomo_par_col_json_fname)
+        fprintf(tomo_par_col_json_fname, tomo_par_col_json)
+        close(tomo_par_col_json_fname)
+    }
+
+"""    
+    tomo_type[0] = "df1"
+    tomo_type[1] = "bf1"
+    tomo_type[2] = "ts1"
+    tomo_type[3] = "df2"
+    tomo_type[4] = "bf2"
+    tomo_type_json = encode("json", tomo_type)
+    tomo_type_json_fname = sprintf("%s/%s/tomo_type.json", DAQROOT, SAMPLEID)
+    if (file_info(tomo_type_json_fname, "-e") != 1) {
+        open(tomo_type_json_fname)
+        fprintf(tomo_type_json_fname, tomo_type_json)
+        close(tomo_type_json_fname)
+    }    
+"""
+    
+    umv nfbsz 2
+	comment "taking darkfield 1 ...."
+	slew_ome 0 10 20 TOMO_EXPTIME darkfield
+    open(par_fname)     
+    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %s", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], "df1")
+#    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %d", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], 0)
+    close(par_fname)    
+
+	umv ramsx -4
+	comment "taking brightfield 1 ...."
+	slew_ome 0 10 20 TOMO_EXPTIME
+    open(par_fname)     
+    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %s", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], "bf1")
+#    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %d", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], 1)
+    close(par_fname)
+	umv ramsx 0
+
+	comment "doing the tomography scan"
+	slew_ome TOMO_START (TOMO_START+TOMO_DEG) TOMO_IMAGES TOMO_EXPTIME
+    open(par_fname)     
+    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %s", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], "ts1")
+#    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %d", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], 2)
+    close(par_fname)
+
+	comment "taking darkfield 2 ...."
+	slew_ome 0 10 20 TOMO_EXPTIME darkfield
+    open(par_fname)     
+    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %s", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], "df2")
+#    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %d", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], 3)
+    close(par_fname)
+
+	umv ramsx -4
+	comment "taking brightfield 2 ...."
+	slew_ome 0 10 20 TOMO_EXPTIME
+    open(par_fname)     
+    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %s", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], "bf2")
+#    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %d", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], 4)
+    close(par_fname)
+	umv ramsx 0
+    
+}'
+
+def tomo_sequence_brightdark '{
+    local par_fname, tomo_par_col, tomo_par_col_json, tomo_par_col_json_fname, tomo_type, tomo_type_json, tomo_type_json_fname
+    par_fname = sprintf("%s/%s/tomo_series.par",DAQROOT,SAMPLEID)
+
+    tomo_par_col[0] = "date"
+    tomo_par_col[1] = "time"
+    tomo_par_col[2] = "epoch"
+    tomo_par_col[3] = "SCAN_N"
+    tomo_par_col[4] = "junkstart"
+    tomo_par_col[5] = "goodstart"    
+    tomo_par_col[6] = "load"
+    tomo_par_col[7] = "screw"
+    tomo_par_col[8] = "ramsz"
+    tomo_par_col[9] = "tomotype"
+    tomo_par_col_json = encode("json",tomo_par_col)
+    tomo_par_col_json_fname = sprintf("%s/%s/tomo_series.json", DAQROOT, SAMPLEID)
+    if (file_info(tomo_par_col_json_fname, "-e") != 1) {
+        open(tomo_par_col_json_fname)
+        fprintf(tomo_par_col_json_fname, tomo_par_col_json)
+        close(tomo_par_col_json_fname)
+    }
+
+"""    
+    tomo_type[0] = "df1"
+    tomo_type[1] = "bf1"
+    tomo_type[2] = "ts1"
+    tomo_type[3] = "df2"
+    tomo_type[4] = "bf2"
+    tomo_type_json = encode("json", tomo_type)
+    tomo_type_json_fname = sprintf("%s/%s/tomo_type.json", DAQROOT, SAMPLEID)
+    if (file_info(tomo_type_json_fname, "-e") != 1) {
+        open(tomo_type_json_fname)
+        fprintf(tomo_type_json_fname, tomo_type_json)
+        close(tomo_type_json_fname)
+    }    
+"""
+    
+    umv nfbsz 2
+	comment "taking darkfield 1 ...."
+	slew_ome 0 10 20 TOMO_EXPTIME darkfield
+    open(par_fname)     
+    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %s", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], "df1")
+#    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %d", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], 0)
+    close(par_fname)    
+
+	umv ramsx -4
+	comment "taking brightfield 1 ...."
+	slew_ome 0 10 20 TOMO_EXPTIME
+    open(par_fname)     
+    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %s", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], "bf1")
+#    fprintf(par_fname, "\n%s %s %d %d %d %d %g %g %g %d", date("%Y%m%d"), date("%H%M%S"), time(), SCAN_N, JUNKSTART, GOODSTART, _wm_force(), _wm_screw(), A[ramsz], 1)
+    close(par_fname)
+	umv ramsx 0
+
+	comment "ready for the tomography scan"
+    
+}'
+
+
+def do_tomo_scan_layers '{
+
+    if ($# != 3) {
+	eprint "Usage:  do_tomo_scan_layers nlayers layersize z_center"
+	exit
+    }
+
+    local j nlayers layersize z_center
+
+    nlayers = $1
+    layersize = $2
+    z_center = $3
+
+    if (SYNC_NF_MODE != 1) {
+        eprint "not in near-field mode"
+        exit
+    }
+
+    atten TOMO_ATTEN
+    
+    set_beam_height TOMO_HEIGHT
+    set_beam_width TOMO_WIDTH
+    umv nfbsz 2
+    closes
+    umv ramsx 0
+    
+    #while (yesno("Cover on the Parker controller?", 0) == 0) {
+    #    continue
+    #}
+        
+    comment "=== tomo-field scan ==="
+
+    for (j=0; j<nlayers; j++) {
+	comment "=== Processing layer %g ==" "j+1"
+	umv ramsz (layersize*(-(nlayers/2)+1/2+j)+z_center)
+    tomo_sequence
+
+    }
+    
+    umv nfbsz 0
+}'
+
+def take_rad '{
+    if (SYNC_NF_MODE != 1) {
+        sync_nf_on    
+    }    
+    atten RAD_ATTEN
+    set_beam_height RAD_HEIGHT
+    hutch_light_off
+    umv ramsz RAD_Z   
+    umv ome RAD_OME
+    umv nfbsz 2
+    sync_nf_multiple_exp 1 RAD_EXPTIME    
+    rad_write_to_par  
+    hutch_light_on   
+}'
+
+def take_rad_multiple '{
+    if ($# != 1) {
+	eprint "Usage:  take_rad_multiple [number of frames]"
+	exit
+    }
+
+    local nframes
+
+    nframes = $1
+
+    if (SYNC_NF_MODE != 1) {
+        sync_nf_on    
+    }    
+
+    atten RAD_ATTEN
+    set_beam_height RAD_HEIGHT
+    hutch_light_off
+    umv ramsz RAD_Z   
+    umv ome RAD_OME
+    umv nfbsz 2
+    sync_nf_multiple_exp nframes RAD_EXPTIME    
+    rad_write_to_par  
+    hutch_light_on   
+}'
+
+
+def rad_write_to_par '{
+    local par_fname
+    
+    par_fname = sprintf("%s/%s/rad.par",DAQROOT,SAMPLEID)
+    open(par_fname)     
+    fprintf(par_fname, "\n%s %s %d %d %g %g %g", date("%Y%m%d"), date("%H%M%S"), time(), epics_get("QIMAGE1:TIFF1:FileNumber")-1, _wm_force(), _wm_screw(), A[ome])
+    close(par_fname) 
+}'
+
+
+def mvr_with_rad '{
+    if ($# != 4) {
+	eprint "Usage:  mvr_with_rad displacement block vel accel"
+	exit
+    }
+    mvr_screw $1 $2 $3 $4    
+    take_rad
+}'
+
+
+#################################
+### digital image correlation ###
+#################################
+
+def dic_write_to_par '{
+    local par_fname
+	
+    par_fname = sprintf("%s/%s/dic.par",DAQROOT,SAMPLEID)
+    open(par_fname)     
+    fprintf(par_fname, "\n%s %s %d %d %g %g %g", date("%Y%m%d"), date("%H%M%S"), time(), epics_get("PG1:TIFF1:FileNumber")-1, _wm_screw(), _wm_force(), A[ome])
+    close(par_fname) 
+}'
+
+
+def take_dic_nomove '{
+    hutch_light_off
+    dic_exposure DIC_EXPTIME 1
+    dic_write_to_par
+}'
+
+def take_dic '{
+    hutch_light_off
+    umv ramsz DIC_Z ome DIC_OME
+    dic_exposure DIC_EXPTIME 1
+    dic_write_to_par  
+    hutch_light_on
+
+}'
+
+
+def take_dic_four_sides '{
+	local i, dic_side
+	
+    hutch_light_off
+    umv ramsz DIC_Z    
+    for (i=0; i<4; i++) {
+        dic_side = (DIC_OME-180)+90*i
+        umv ome dic_side
+        dic_exposure DIC_EXPTIME 1
+        dic_write_to_par
+    }
+    hutch_light_on 
+}'	
+
+
+def mv_screw_dic '{
+    local par_fname	
+	
+    if ($# != 4) {
+        eprint "Usage:  mv_screw_dic pos block vel accel"
+	    exit
+    }	
+    mv_screw $1 $2 $3 $4
+    take_dic
+    take_dic
+}'
+
+
+def mvr_screw_dic '{
+    local par_fname
+	
+    if ($# != 4) {
+        eprint "Usage:  mvr_screw_dic step block vel accel"
+	exit
+    }
+    mvr_screw $1 $2 $3 $4
+    take_dic
+    take_dic
+    take_dic
+
+}'
+
+
+###################
+### combination ###
+###################
+
+def tomo_mvr_screw_dic '{
+    local tomo_nlayers, tomo_layersize, tomo_z_center, step, vel, accel, nsteps, jj, k, ndic
+	
+    if ($# != 8) {
+        print "tomo_mvr_screw_dic nlayers layersize z_center rel_disp vel accel nsteps ndic"
+        exit
+    }
+	
+    tomo_nlayers = $1
+    tomo_layersize = $2
+    tomo_z_center = $3
+    rel_disp = $4
+    vel = $5
+    accel = $6
+    nsteps = $7
+    ndic = $8
+		
+    comment "tomo_mvr_screw_dic %d %f %f %f %f %f %d %d" "tomo_nlayers, tomo_layersize, tomo_z_center, rel_disp, vel, accel, nsteps, ndic"
+	
+    take_dic
+    for (jj=0; jj<nsteps; jj++) {
+        comment "=== displacement step %d ===" "jj+1"
+        do_tomo_scan_layers tomo_nlayers tomo_layersize tomo_z_center
+
+        for (k=0; k<ndic; k++) {
+            mvr_screw_dic rel_disp 1 vel accel
+        }
+    }
+}'
+
+
+
+def mvr_dic_increments '{
+     local rel_disp vel accel n_increments
+     
+     if ($# != 4) {
+	print "mvr_dic_increments rel_disp vel accel n_increments"
+	exit
+     }
+    
+    rel_disp = $1
+    vel = $2
+    accel = $3
+    n_increments = $4
+	
+    comment "mvr_dic_increments %f %f %f %d" "rel_disp, vel, accel, n_increments"
+
+    take_dic
+
+    for (k=0; k<n_increments; k++) {
+        mvr_screw_dic rel_disp 1 vel accel
+        }
+    
+}'
+
+
+def ff_scan_layers_with_rad '{
+    local j, nlayers, layersize, z_center
+    
+    if ($# != 3) {
+        eprint "Usage:  do_ff_scan_layers nlayers layersize z_center"
+        exit
+    }
+
+    nlayers = $1
+    layersize = $2
+    z_center = $3
+    
+    if (SYNC_FF_MODE != 1) {
+        eprint "not in far-field mode"
+        exit
+    }
+
+    comment "=== beginning ff/load series ==="
+      
+    set_beam_height FF_HEIGHT
+    atten FF_ATTEN
+    ic_gain_check
+    set_beam_height FF_HEIGHT # just to be sure
+    atten FF_ATTEN
+
+    for (j=0; j<nlayers; j++) {
+        comment "=== Processing layer %g ==" "j+1"
+        umv ramsz (layersize*(-(nlayers/2)+1/2+j)+z_center)
+        slew_ome 0 FF_DEG FF_NIMAGES FF_EXPTIME
+    }    
+    take_rad   
+}'
+
+
+def question_test '{
+    while (yesno("did you turn off the hutch light?", 0) == 0) {
+        continue
+    }
+}'
+
+def mv_screw_record '{
+    local par_fname	
+	
+    if (($# == 0) || ($# > 4)) {
+        eprint "Usage:  mv_screw_record pos [block] [vel] [accel]"
+	exit
+    }	
+	mv_screw $1 $2 $3 $4
+        par_fname = sprintf("%s/%s/rams_load_record.par",DAQROOT,SAMPLEID) 
+	open(par_fname)
+	fprintf(par_fname, "\n%s %s %d %f %f", date("%Y%m%d"), date("%H%M%S"), time(), _wm_screw(), _wm_force())
+        close(par_fname)   
+}'
+
+
+def mvr_screw_record '{
+    local par_fname
+    if (($# == 0) || ($# > 4)) {
+        eprint "Usage:  mvr_screw_record step [block] [vel] [accel]"
+	exit
+    }
+	mvr_screw $1 $2 $3 $4
+        par_fname = sprintf("%s/%s/rams_load_record.par",DAQROOT,SAMPLEID) 
+	open(par_fname)
+	fprintf(par_fname, "\n%s %s %d %f %f", date("%Y%m%d"), date("%H%M%S"), time(), _wm_screw(), _wm_force())
+        close(par_fname)       
+}'
+
+def find_layer_centroids '{
+
+    local j nlayers layersize z_center
+
+    nlayers = $1
+    layersize = $2
+    z_center = $3
+	
+    for (j=nlayers-1; j>=0; j--) {
+       	comment "=== Moving to layer %g ==" "j+1"
+	p layersize*(-(nlayers/2)+1/2+j)+z_center
+}
+}'
+
+
+def sync_onoff_test '{
+	local j, num_cycles
+	
+	num_cycles = 1
+	
+	for (j=0; j<num_cycles; j++) {
+		if (SYNC_FF_MODE == 1) {
+            sync_ff_off
+            printf("\nRemoving ff scan parameters again...")
+            cdef("", "", "_sync_ff_", "delete")
+	    }
+        sync_tomo_on
+	    printf("\nConfiguring nf new file again...")
+        cdef("user_newfile", "_sync_nf_newfile;", "_sync_nf_")
+        printf("\nConfiguring nf scan parameters again...")
+        cdef("sync_user_scan_head", "_sync_nf_scan_head;", "_sync_nf_")   
+        cdef("sync_user_scan_tail", "_sync_nf_scan_tail;", "_sync_nf_")
+        cdef("sync_user_abort", "_sync_nf_abort;", "_sync_nf_")	
+	
+	    slew_ome 0 5 10 1 darkfield
+
+        sync_nf_off
+	    cdef("", "", "_sync_nf_", "delete")		
+	    sync_ff_on
+	    printf("\nConfiguring ff new file again...")
+        cdef("user_newfile", "_sync_ff_newfile;", "_sync_ff_")
+        printf("\nConfiguring ff scan parameters again...")
+        cdef("sync_user_scan_head", "_sync_ff_scan_head;", "_sync_ff_")
+        cdef("sync_user_scan_tail", "_sync_ff_scan_tail;", "_sync_ff_")
+        cdef("sync_user_abort", "_sync_ff_abort;", "_sync_ff_")		
+	    slew_ome 0 10 40 0.25 darkfield
+	}
+}'
+
+
+###############################
+####Combining functions########
+###############################
+
+
+
+def _bad_lim_check(motor_input, pos_input) '{
+    if (dial(motor_num(motor_input), pos_input) < get_lim(motor_num(motor_input), -1)) {
+        _bad_lim++
+        return sprintf("Adjust %g. %s will hit low limit at dial %g.\n", pos_input, motor_mne(motor_num(motor_input)), get_lim(motor_num(motor_input), -1))
+    }
+    if (dial(motor_num(motor_input), pos_input) > get_lim(motor_num(motor_input), 1)) {
+        _bad_lim++
+        return sprintf("Adjust %g. %s will hit high limit at dial %g.\n", pos_input, motor_mne(motor_num(motor_input)), get_lim(motor_num(motor_input), 1))
+    }
+}'
+
+
+def bad_lim_check '{
+    if (_bad_lim_check($1, $2) !=0) {
+        printf ("%s", _bad_lim_check($1, $2))
+    }
+}'
+
+
+def bad_lim_exit '{
+    if (_bad_lim > 0) {
+        _bad_lim = 0
+        exit
+    } else {
+        _bad_lim = 0
+    }
+}'
+
+
+##### DIC loading sample #####
+
+def stepped_dic '{
+    local k, rel_disp, rel_vel, rel_accel, crosshead_i, crosshead_now, ndispsteps, exit_loop
+
+    if ($# != 4) {
+        eprint "Usage:  stepped_dic disp vel accel ndispsteps "
+        exit
+    }    
+    #cdef("cleanup_once", "stepped_dic_abort;", "_stepped_dic_cleanup_")    
+    
+    rel_disp = $1
+    rel_vel = $2
+    rel_accel = $3  
+    ndispsteps = $4
+    z_center = DIC_Z
+
+    comment "collecting no load dic"    
+    umv ome DIC_OME
+    umv ramsz z_center
+    take_dic_nomove
+    
+    crosshead_i = _wm_screw()
+    comment "Initial rams screw position is %g" "crosshead_i" 
+    comment "movement started"    
+    crosshead_now = crosshead_i
+
+    
+###----- for loop to pull>
+    for (k=0; k<ndispsteps; k++) {       
+                mvr_screw rel_disp 1 rel_vel rel_accel
+	        #will adjust ramsz to compensate for the screw motion:
+                crosshead_now = _wm_screw()
+	        crosshead_diff = fabs(crosshead_now-crosshead_i)            
+		umvr ramsz -crosshead_diff/2
+                take_dic_nomove 
+	        crosshead_i = _wm_screw()
+         }              
+}'
+
+
+
+######################### DIC TOMO INCREMENTS WITH RAMSZ ADJUSTMENT #####################
+
+def loading_tomo_dic '{
+    local tomo_nlayers, tomo_layersize, tomo_z_center, n_tomo_steps, rel_disp, rel_vel, rel_accel, crosshead_i, crosshead_now, jj, k, length_at_failure
+
+ if ($# != 8) {
+        eprint "Usage:  loading_tomo_dic tomo_nlayers tomo_layersize tomo_z n_tomosteps disp vel accel length_at_failure "
+        exit
+    }  
+
+	tomo_nlayers = $1
+	tomo_layersize = $2
+	tomo_z_center = $3
+	no_tomo_steps = $4
+	rel_disp = $5
+	rel_vel = $6
+	rel_accel = $7
+	length_at_failure = $8
+
+	ten_percent = length_at_failure*0.1
+	increments = ten_percent/rel_disp
+
+	comment "collecting no load dic"    
+	take_dic_nomove
+    
+    	crosshead_i = _wm_screw()
+    	comment "Initial rams screw position is %g" "crosshead_i" 
+    	comment "movement started"    
+    	crosshead_now = crosshead_i
+	umv ramsz tomo_z_center
+
+
+    for (jj=0; jj<no_tomo_steps; jj++) {       
+
+	comment "=== displacement step %d ===" "jj+1"
+	tomo_z_center = A[ramsz]
+        do_sleep(300)
+        do_tomo_scan_layers tomo_nlayers tomo_layersize tomo_z_center
+	umv ramsz tomo_z_center
+	take_dic_nomove
+	
+	
+        for (k=0; k<increments; k++) {
+		mvr_screw rel_disp 1 rel_vel rel_accel
+	        #will adjust ramsz to compensate for the screw motion:
+                crosshead_now = _wm_screw()
+	        crosshead_diff = fabs(crosshead_now-crosshead_i)            
+		umvr ramsz -crosshead_diff/2
+                take_dic_nomove 
+	        crosshead_i = _wm_screw()
+          }
+     }
+
+	for (kk=0; kk<1000; kk++) {
+		mvr_screw rel_disp 1 rel_vel rel_accel
+	        #will adjust ramsz to compensate for the screw motion:
+                crosshead_now = _wm_screw()
+	        crosshead_diff = fabs(crosshead_now-crosshead_i)            
+		umvr ramsz -crosshead_diff/2
+                take_dic_nomove 
+	        crosshead_i = _wm_screw()
+    }
+}'
+
+#############################3
+
+def loading_dic '{
+    local k, rel_disp, rel_vel, rel_accel, crosshead_i, crosshead_now, ndispsteps, exit_loop
+
+    if ($# != 4) {
+        eprint "Usage:  stepped_dic disp vel accel ndispsteps "
+        exit
+    }    
+    #cdef("cleanup_once", "stepped_dic_abort;", "_stepped_dic_cleanup_")    
+    
+    rel_disp = $1
+    rel_vel = $2
+    rel_accel = $3  
+    ndispsteps = $4
+    z_center = A[ramsz]
+
+    comment "collecting no load dic"    
+    umv ome DIC_OME
+    umv ramsz z_center
+    take_dic_nomove
+    
+    crosshead_i = _wm_screw()
+    comment "Initial rams screw position is %g" "crosshead_i" 
+    comment "movement started"    
+    crosshead_now = crosshead_i
+
+    
+###----- for loop to pull>
+    for (k=0; k<ndispsteps; k++) {      
+                mvr_screw rel_disp 1 rel_vel rel_accel
+	        #will adjust ramsz to compensate for the screw motion:
+                crosshead_now = _wm_screw()
+	        crosshead_diff = fabs(crosshead_now-crosshead_i)            
+		umvr ramsz -crosshead_diff/2
+                take_dic_nomove 
+	        crosshead_i = _wm_screw()
+         }              
+}'
+
+
+######## CYCLIC LOADING
+
+DISP_CYCLE_MAX_SCREW = -14.84 #make this slightly more positive than top_point
+DISP_CYCLE_MIN_SCREW = -14.88 #make this slightly more negative than bot_point
+
+def disp_cycle '{
+
+    if ($# != 3) {
+        eprint "Usage:  disp_cycle num_cycles top_point bot_point"
+	exit
+    }
+    
+    local start_pos, num_cycles, top_point, bot_point
+    
+    start_pos=_wm_screw()
+    num_cycles = $1
+    top_point = $2
+    bot_point = $3
+    
+    if (top_point > DISP_CYCLE_MAX_SCREW) {
+        comment "top position is greater than defined max screw %g" "DISP_CYCLE_MAX_SCREW"
+        exit
+    }
+
+    if (bot_point < DISP_CYCLE_MIN_SCREW) {
+        comment "bottom position is less than defined min screw %g" "DISP_CYCLE_MIN_SCREW"
+        exit
+    }
+    
+    comment "disp_cycle %d %g %g" "num_cycles, top_point, bot_point"
+    comment "Start position is %g" "start_pos"
+
+    for (j=0; j<num_cycles; j++) {
+	comment "Begining cycle %d of %d" "j+1, num_cycles"
+	mv_screw bot_point 1 0.05 0.005
+	take_dic
+	take_dic
+	mv_screw top_point 1 0.05 0.005
+	take_dic
+	take_dic
+	comment "End of cycle %d of %d" "j+1, num_cycles"
+    }
+    comment "Moving back to start position"
+    mv_screw start_pos 1 0.05 0.005
+    take_dic
+    take_dic
+}'
+
+
+		
+
+	
+

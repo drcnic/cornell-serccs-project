@@ -1,0 +1,16 @@
+QUESTIONS:
+	3A FAST essentials
+		BTR = ?
+		Aux files directory, organized by what I'm assuming is an identifier for each run: what sort of metadata/files?
+	Spec documentation
+		Any commands I should never EVER touch?
+		Progress on getting access to virtual spec instance?
+		
+
+NOTES:
+	example_user_macro
+		line 150: missing closing brace?
+	mm_pad	
+		what is a Keithley?
+		Workflow? Which functions need to be executed prior to mm_pad data collection? Is it assumed they will be before executing user script, or must it be automated as well?
+	
