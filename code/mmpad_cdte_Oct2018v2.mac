@@ -561,7 +561,11 @@ def mmpad_hvon '{
 
     if (MMPAD["hv_ok"] == 0) {
         print "Turning on sensor HV supply..."
+        
+        #next run padcom hvon twice - step 11(c) on p.1 of MMPAD CdTe primer:
         camserver("padcom hvon",1)
+        camserver("padcom hvon",1)
+        
         print "setting sensor HV to 2 V. remember to run mmpad_resethv and take new darks before collecting data."
         camserver("padcom hvset 2",0.1)
         MMPAD["hv_ok"] = 1
