@@ -1,0 +1,14 @@
+example_user_macro.mac
+	- sync_tomo_on is defined in sync_daq.mac
+		- see if this function interacts with mmpad_cdte
+	- what are "CT macros"/ what is "SPEC CT"?
+	- MMPAD_ROIS_DONE MMPAD_ROIS variables?
+	
+
+TODO:
+	- test cdef function on Cornell computers to check if it behaves as expected
+	- finish refactoring mmpad_cdte file
+	- figure out how/if camserver functions have return values/strings
+
+What i'll say
+	- just making sure: i can execute almost all the code in mmpad_cdte.mac?
