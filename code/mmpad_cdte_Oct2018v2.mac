@@ -556,13 +556,12 @@ def _mmpad_getcounts '
 
 
 
-def set_path '{
-    MMPAD["path"] = getval("Enter MMPAD output path", MMPAD["path"]);
+def mmpad_set_path '{
+    MMPAD["path"] = getval("Enter MMPAD remote path for images (must exist)", MMPAD["path"]);
 }'
 
-
 # Turns on MMPAD detector power board and Keithley HV power supply:
-def detector_setup '{
+def mmpad_detector_setup '{
     if(MMPAD["power_ok"] == 0) {
         print "executing detector powerup";
         print "loading detector configuration ./mmpadpower_v2.cmd";
@@ -574,11 +573,11 @@ def detector_setup '{
         MMPAD["power_ok"] = 1   #TODO:  maybe add a check here instead of assuming
     }
 
-    mmpad_hvon; # Turns on and configures Keithley HV power supply (if it isn't on already)
+    mmpad_hvon; # Turns on and configures Keithley HV power supply
 }'
 
 # Establishes connection to detector computer camserver instance:
-def socket_setup '{
+def mmpad_server_setup '{
     if(MMPAD["sock_ok"] == 0) {
         #get the detector IP address:
         local val
@@ -590,10 +589,13 @@ def socket_setup '{
         MMPAD["server"] = val
         
         #establish the network connection to the detector computer:
-        sock_par(MMPAD["server"], "connect");
-        sock_par(MMPAD["server"], "timeout", 25.0)
+        if (!sock_par(MMPAD["server"], "connect")) {    # check if we were successful
+            print "ERROR: Could not connect to camserver. Ensure IP is correct and that camserver is running.";
+            exit;  
+        }
+        sock_par(MMPAD["server"], "timeout", 25.0);
         
-        #assume the connection has been made:
+        #the connection has been made:
         MMPAD["sock_ok"] = 1
         
         #load detector configuration file startup.cmd (this takes a few seconds):
@@ -601,7 +603,7 @@ def socket_setup '{
         print "load detector configuration ./startup.cmd"
         camserver("ldcmndfile ./startup.cmd", 6)
     }
-    print "socket connection open"
+    print "Socket connection open"
 }'
 
 
@@ -611,8 +613,8 @@ def mmpad_on_new '{
     if (!MMPAD["initialized"]) {
         #local str str_n val
 
-        detector_setup  # power everything up
-        socket_setup    # connect to MMPAD server
+        mmpad_detector_setup  # power everything up
+        mmpad_socket_setup    # connect SPEC instance to camserver
 
         #set flag to save frames in blocks:
         print "will save frames in blocks"
@@ -629,11 +631,7 @@ def mmpad_on_new '{
         print "MMPAD initialized"
     
         #get path for images:
-        val = 0
-        while(!val) {
-            val = getval("Remote path for images (must exist)", MMPAD["path"]);
-        }
-        MMPAD["path"] = val
+        mmpad_set_path;
     
         #set exposure time:
         mmpad_exposure_time;
@@ -658,6 +656,7 @@ def mmpad_on_new '{
         }
     }
 
+    # what are these for??
     cdef("user_precount", "_mmpad_precount();", "_mmpad_mac_")
     cdef("user_postcount", "_mmpad_postcount();", "_mmpad_mac_")
     cdef("user_getcounts", "_mmpad_getcounts;" , "_mmpad_mac_")
