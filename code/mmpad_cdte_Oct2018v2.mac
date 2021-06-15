@@ -556,6 +556,11 @@ def _mmpad_getcounts '
 
 
 
+def set_path '{
+    MMPAD["path"] = getval("Enter MMPAD output path", MMPAD["path"]);
+}'
+
+
 # Turns on MMPAD detector power board and Keithley HV power supply:
 def detector_setup '{
     if(MMPAD["power_ok"] == 0) {
