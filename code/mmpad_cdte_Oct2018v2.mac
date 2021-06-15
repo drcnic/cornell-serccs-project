@@ -664,3 +664,7 @@ def mmpad_on_new '{
     cdef("user_getcounts", "_mmpad_getcounts;" , "_mmpad_mac_")
     print "MMPAD macros have been added to spec ct"
 }'
+
+def mmpad_status '{
+    print MMPAD;
+}'
