@@ -562,6 +562,7 @@ def mmpad_set_path '{
 
 # Turns on MMPAD detector power board and Keithley HV power supply:
 def mmpad_detector_setup '{
+    # Turns on mmpad detector power board
     if(MMPAD["power_ok"] == 0) {
         print "executing detector powerup";
         print "loading detector configuration ./mmpadpower_v2.cmd";
@@ -570,7 +571,7 @@ def mmpad_detector_setup '{
         camserver("ldcmndfile ./mmpadpower_v2.cmd",6)
         
         #assume power on has succeeded:
-        MMPAD["power_ok"] = 1   #TODO:  maybe add a check here instead of assuming
+        MMPAD["power_ok"] = 1   #TODO: possibly add a check here instead of assuming?
     }
 
     mmpad_hvon; # Turns on and configures Keithley HV power supply
@@ -595,15 +596,16 @@ def mmpad_server_setup '{
         }
         sock_par(MMPAD["server"], "timeout", 25.0);
         
-        #the connection has been made:
-        MMPAD["sock_ok"] = 1
-        
+        MMPAD["sock_ok"] = 1;    #the connection has been made
+        print "Connected to camserver";
+
         #load detector configuration file startup.cmd (this takes a few seconds):
         #note: this is the step that opens the grab display window
         print "load detector configuration ./startup.cmd"
         camserver("ldcmndfile ./startup.cmd", 6)
+    } else {
+        print "Socket connection already open";
     }
-    print "Socket connection open"
 }'
 
 
@@ -614,7 +616,7 @@ def mmpad_on_new '{
         #local str str_n val
 
         mmpad_detector_setup  # power everything up
-        mmpad_socket_setup    # connect SPEC instance to camserver
+        mmpad_server_setup    # connect SPEC instance to camserver
 
         #set flag to save frames in blocks:
         print "will save frames in blocks"
