@@ -648,7 +648,7 @@ def mmpad_on_new '{
     
     if ("$1" == "auto") {   # if called with auto flag, set everything up without user intervention
         print "Setting up MMPAD automatically...";
-        mmpad_server_setup MMPAD["server"];
+        mmpad_server_setup sprintf("%s",MMPAD["server"]);
         mmpad_set_path MMPAD["path"];
         mmpad_exposure_time MMPAD["exposure_time"];
         mmpad_detector_setup;  # power everything up
