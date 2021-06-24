@@ -1,0 +1,249 @@
+global AUXROOT BTRID DAQID DAQROOT GROUP_ID 
+global SAMPLEID SAMPLENAME SNAPSHOTID USERID USERNAME
+
+DAQROOT = "/nfs/chess/daq/current/id3a"
+AUXROOT = "/nfs/chess/aux/cycles/current/id3a"
+GROUP_ID = "chexsfast"
+
+def newuserid '{
+    _newuserid("$1", "$2")
+}'
+
+def _newuserid(pi, btr) '{
+    local flag, tempd
+    if (pi==0) {
+        pi = getsval("\nuser name", USERNAME)
+    }
+    if (btr==0) {
+        btr = getsval("\nbeamtime request File ID", BTRID)
+    }
+    id = sprintf("%s-%s", pi, btr)
+    if (USERID != id) {
+        tempd = sprintf("%s/%s", DAQROOT, id)
+        if (file_info(tempd, "-d")) {
+            flag = yesno(sprintf("%s already exists. Are you sure?", tempd), 0)
+            if (flag) {
+                #ok, but only make the directories writeable
+                unix(sprintf("find %s -type d -exec chmod 755 {} +", tempd))
+            } else {
+                _newuserid()
+                exit
+            }
+        }
+        # create the daq directory:
+        unix(sprintf("mkdir -p %s", tempd))
+        # create the analysis directory:
+        tempd = sprintf("%s/%s", AUXROOT, id)
+        unix(sprintf("mkdir -p %s", tempd))
+        #change group permissions for aux
+        unix(sprintf("chgrp %s %s", GROUP_ID, tempd))
+        unix(sprintf("chmod g+w %s", tempd))
+
+        #ok, we are really going to proceed
+        #its time to protect data in the old directory
+        unix(sprintf("chmod -R ugo-w %s/%s", DAQROOT, USERID))
+
+        USERNAME = pi
+        BTRID = btr
+        USERID = id
+        eval(sprintf("cd %s/%s", DAQROOT, USERID))
+        p sprintf("Base directory has been set to %s/%s", DAQROOT, USERID)
+        p sprintf("Current working directory is now %s/%s", DAQROOT, USERID)
+        input("Remember to change next file numbers for EPICS DAQ systems...")
+        newsample
+    }
+}'
+
+def newsample '{
+    _newsample("$1")
+}'
+
+def _newsample(name) '{
+    local tempn, tempd
+    if (name==0) {
+        name = getsval("\nSample ID (no path delimiters, please)", SAMPLENAME)
+    }
+
+    tempd = sprintf("%s/%s/%s", DAQROOT, USERID, name)
+    tempn = sprintf("%s/spec.log", tempd, name)
+    if (file_info(tempd, "-d")){
+        # need to check if tempn is writeable
+        # file_info is not reliable, reports nonwritable files are writable
+        if (open(tempn)) {
+            p sprintf("%s is write-protected. Choose another name.", tempn)
+            _newsample()
+            exit
+        } else {
+            # need to close again, just checking if it was writable
+            close(tempn)
+        }
+    }
+    # create the daq directory:
+    unix(sprintf("mkdir -p %s", tempd))
+    # create the analysis directory:
+    tempd = sprintf("%s/%s/%s", AUXROOT, USERID, name)
+    unix(sprintf("mkdir -p %s", tempd))
+    #change group permissions for aux
+    unix(sprintf("chgrp %s %s", GROUP_ID, tempd))
+    unix(sprintf("chmod g+w %s", tempd))
+
+    SAMPLENAME = name
+    SAMPLEID = sprintf("%s/%s", USERID, SAMPLENAME)
+    SNAPSHOTID = sprintf("%s/snapshots", SAMPLEID)
+    unix(sprintf("mkdir -p %s/%s", DAQROOT, SNAPSHOTID))
+    DAQID = SNAPSHOTID
+    eval(sprintf("_newfile %s/%s/spec.log", DAQROOT, SAMPLEID))
+}'
+
+
+undef newfile
+def newfile '{
+    _1 = "$1"
+    p "newfile is disabled on id3a."
+    p "Use newsample instead of newfile."
+}'
+
+def _newfile '{
+	_3 = DATAFILE
+	if ($# == 0) {
+		_1 = getsval("\nData file", DATAFILE)
+		_2 = 0
+	} else {
+		_1 = "$1"; _2 = $2
+	}
+	if (_1 == "")
+		exit
+	if (_1 == "null")
+		_1 = "/dev/null"
+	if (!index(_1, "/") && file_info(DATA_DIR, "-d"))
+		_1 = sprintf("%s/%s",DATA_DIR,_1)
+
+	if (!file_info(_1, "-r")) {
+		if (_1 == DATAFILE) {
+			printf(\
+	"Warning:  Same name as before, but file isn\'t in %s directory.\n",\
+					     index(_1, "/")? "same":"current")
+			printf("A new version of the file will be created.\n")
+		}
+		DATAFILE="/dev/null"
+	} else if (_1 != "/dev/null") {
+		local s
+		if (file_info(s = SPECD "/chk_file", "-x"))
+			if (!unix(sprintf("%s %s",s,_1))) {
+				# changes - find last scan
+				local _s _i
+				_s = getline(_1, 0)
+				if (index(_s, "#S"))
+					sscanf(_s, "%*s %d", _i)
+				while ((_s = getline(_1)) != -1)
+					if (index(_s, "#S"))
+						sscanf(_s, "%*s %d", _i)
+				_2 = _i
+			}
+	}
+	#
+	if (open(_1)) {
+		DATAFILE="/dev/null"
+		exit
+	}
+	if (_1 != "tty" && _1 != "/dev/tty")
+		close(_1)
+	if (_1 == DATAFILE) {
+		if (open(_1)) {
+			# change - add warning
+			eprint "All data is being discarded.\n"
+			DATAFILE="/dev/null"
+			exit
+		}
+		if ($# == 2 && SCAN_N != $2)
+			SCAN_N = $2
+		else if (_2)
+			SCAN_N = _2
+		# change (above else if clause) set scan number 
+	} else {
+		if ($# == 0)
+			_2 = getval("Last scan number",_2)
+		#change - remove check which could cancel above changes 
+		#else if ($# == 1)
+		#	_2 = 0
+		if (_3 != "" && _3 != "0" && _3 != "tty" && _3 != "/dev/tty")
+			close(_3)
+		if (open(_1)) {
+			# change - add warning
+			eprint "All data is being discarded.\n" 
+			DATAFILE="/dev/null"
+			exit
+		}
+		DATAFILE = _1
+		SCAN_N = _2
+		ond; offt
+		if (SCAN_N == 0) {
+			constant EPOCH time()
+			printf("#F %s\n", DATAFILE)
+		}
+		printf("#E %d\n",EPOCH)
+		printf("#D %s\n",date())
+		printf("#C %s  User = %s\n",TITLE,USER)
+		user_filehead
+		local i,j,s
+		for (i=0; i<MOTORS; i+=8) {
+			s = sprintf("#O%d ", i/8)
+			for (j=i; j<i+8 && j<MOTORS;) {
+				if (motor_name(mA[j]) != "unused")
+					s = s sprintf("%8s", motor_name(mA[j]))
+				if (j%8 == 7)
+					break
+				s = s "  "
+				j++
+			}
+			print s
+		}
+		offd; ont
+	}
+	printf("Using \"%s\".  Next scan is number %d.\n",DATAFILE,SCAN_N+1)
+	# cdef newfile hook.  Not sure how to initialize without rewriting cdefs
+	# from previous run... At the moment I had better do it in this file...
+	user_newfile
+}'
+
+
+########################################################
+# Support saving ancillary scan data into subdirectory #
+########################################################
+
+
+def set_daqdir_in_scan '{
+    local i, tempd
+
+    i = 0
+    tempd = sprintf("%s/%s/%d", DAQROOT, SAMPLEID, SCAN_N)
+    while (file_info(tempd, "-e")) {
+        # it is possible to reset the scan counter, so we need
+        # to support multiple scans with the same SCAN_N
+        tempd = sprintf("%s/%s/%d-%d", DAQROOT, SAMPLEID, SCAN_N, ++i)
+    }
+    unix(sprintf("mkdir -p %s", tempd))
+    DAQID = sprintf("%s/%s", SAMPLEID, SCAN_N)
+}'
+
+
+def set_daqdir_no_scan '{
+    DAQID = SNAPSHOTID
+}'
+
+
+# reimplement ct to ensure scandir gets set appropriately
+def ct '{
+    cdef("cleanup_once", "onp; show_cnts; offp; user_ct", "ct")
+    waitmove
+    set_daqdir_no_scan
+    count_em $*
+    waitcount
+    cdef("cleanup_once", "", "ct", "delete")
+    onp; show_cnts; offp
+    user_ct
+}'
+
+
+cdef("Fheader", "set_daqdir_in_scan;", "_scandir_", 0x10)
+cdef("user_scan_tail", "set_daqdir_no_scan;", "_scandir_", 0x10)

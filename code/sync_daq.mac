@@ -1,0 +1,1286 @@
+NFY_POS = 4 #12 #6.75
+NFY_FURN_POS = 25.0
+
+NFX_OUT = 20.0
+
+#using rams4 near-field setup, choose 5.2 mm as nfx in default position 9/26/2020:
+# updated to 4.59 after realignment of shutter x.
+#updated to 4.265 on 9/30/2020:
+#and to 4.290 on 10/1/2020:
+#and again to 0.955 on 10/7/2020...
+#and again to 0.855 on 10/12/2020...
+#and again to 1.525 on 10/14/2020...
+#and again to 1.370 on 10/16/2020...
+#and again to 0.870 on 11/11/2020
+NFX_IN_DEF = 0.840
+
+NFX_FURN_OUT = 20.0
+NFY_FURN_OUT = 25.0
+
+NFY_LOW = NFY_POS-0.1
+
+
+NFY_HIGH = 40.1
+
+NFY_FURN_LOW = NFY_FURN_POS-0.1
+NFY_FURN_HIGH = NFY_HIGH
+
+LOW_CUR=80
+
+#default attenuation in mm of steel for nf data
+NF_ATT_DEF=0 
+
+#default attenuation in mm of steel for ff data
+FF_ATT_DEF=8
+
+
+##################
+# Core Utilities #
+##################
+
+# We sometimes use a pulse delay generator as the synchronization source
+
+global _sync_pulse_addr
+
+_sync_pulse_addr = "192.168.182.100:5025"
+
+def sync_pulse_comm(command) '{
+    local arr
+    sock_put(_sync_pulse_addr, sprintf("%s\r", command))
+    sleep(.1)
+    split(sock_get(_sync_pulse_addr), arr, "\r\n")
+    return arr["0"]
+}'
+
+
+
+##############
+# scan hooks #
+##############
+
+
+if (!(whatis("sync_user_scan_head")&02)) {
+    rdef sync_user_scan_head ''
+}
+
+if (!(whatis("sync_user_scan_tail")&02)) {
+    rdef sync_user_scan_tail ''
+}
+
+if (!(whatis("sync_user_abort")&02)) {
+    rdef sync_user_abort ''
+}
+
+
+###################
+# logging support #
+###################
+
+
+def _sync_log_newfile '{
+     # This needs to be uncommented once it is available:
+     epics_put("f2-pxi-daq:RamsDaq:DataDirectory", sprintf("Z:/%s", DAQID))
+     epics_put("f2-pxi-daq:RamsDaq:AcquisitionName", SAMPLENAME)
+}'
+
+
+def sync_log_start '{
+    _sync_log_newfile
+    comment "Data logging to %s/scalars/%6.6d" "epics_get(\"f2-pxi-daq:RamsDaq:DataDirectory\", \"string\"), epics_get(\"f2-pxi-daq:RamsDaq:FileNumber\")"
+    comment "Disregard the first three lines of scalar data"
+    sleep(0.2)
+    epics_put("f2-pxi-daq:RamsDaq:Acquire", 1)
+    sleep(1.0)# 5 works with dexelas at high speed, this needs to be reduced with checking
+}'
+
+
+def sync_log_stop '{
+    epics_put("f2-pxi-daq:RamsDaq:Acquire", 0)
+}'
+
+
+def sync_log_on '{
+    _sync_log_newfile
+    cdef("user_newfile", "_sync_log_newfile;", "_sync_log_")
+    cdef("sync_user_scan_head", "sync_log_start;", "_sync_log_")
+    cdef("sync_user_scan_tail", "sync_log_stop;", "_sync_log_", 0x10)
+    cdef("user_scan_tail", "sync_log_stop;", "_sync_log_", 0x10)
+    cdef("sync_user_abort", "sync_log_stop;", "_sync_log_")
+}'
+
+
+def sync_log_off '{
+    cdef("", "", "_sync_log_", "delete")
+}'
+
+
+##########################
+# very far-field support # MMPAD sensor
+##########################
+
+global SYNC_VFF_MODE
+
+def _sync_vff_newfile '{
+    printf("Creating vff directory...");
+    
+    _1 = sprintf("%s/%s/vff", DAQROOT, DAQID)
+    if (!file_info(_1, "-d")){
+        unix(sprintf("mkdir -p %s", _1))
+    }
+}'
+
+
+def _sync_vff_abort '{
+    # for mmpad:
+    #   what should go in here?
+    #   may need to look at camserver
+    # camserver("reset_frame") -- forget what you were collecting, reset
+    # ctrl+c
+    
+    #camserver("ResetCam", 1);   # stops in-prog exposure, closes shutter (same as closes?), sets mmpad to idle
+                                # line 452, camserver.c 
+    camserver("padcom reset_frame", 1); # reset counters that track acquired and expected frames 
+    printf("MMPAD scan aborted.\n")
+}'
+
+# num of frames to collect, primes cams to take images
+# set_take_n
+# exposure 
+def _sync_vff_scan_head '{
+    _sync_ff_newfile
+
+}'
+
+# comment command -> logfile
+#   where last image was saved
+def _sync_vff_scan_tail '{
+    comment "MMPAD saved last image to %s" "sprintf("%s/%s/vff",DAQROOT,DAQID)";
+}'
+
+# take dark images in here
+# take new backgrounds (dark images) any time exposure time is changed
+#   bake this in for every time exposures are taken?
+#
+# acquire 100microseconds exposure time background frames
+#   gives a set of background frames with minimal dark current
+#   captures pedestal value 
+#
+# call mmpad_dark from mmpad_cdte.mac
+#
+# how much should additional sets of backgrounds be woven in?
+#
+# automatically 
+#   -set image path
+#   -set 100microsec exposure time FOR TAKING PLACEHOLDER DARKS
+#       - call mmpad_dark
+#           - takes background images
+#           - turns on automatic background subtraction
+#   -set trigger to hardware
+# 
+# does mmpad_on need to be done before dark images?
+def sync_vff_on '{
+    printf("\n***Remember to use appropriate attenuation***")
+    printf("\nSetting directories for vff...")
+   _sync_ff_newfile   
+
+    #printf("\nConfiguring vff (MMPAD) trigger mode...")
+    printf("Turning on MMPAD...\n");
+    mmpad_on_new;
+
+
+    printf("Taking dark frames...\n");
+    mmpad_dark;
+
+    sleep(5)
+    printf("\nConfiguring vff new file...")
+    cdef("user_newfile", "_sync_vff_newfile;", "_sync_vff_")
+    printf("\nConfiguring vff scan parameters...")
+    cdef("sync_user_scan_head", "_sync_vff_scan_head;", "_sync_vff_")
+    cdef("sync_user_scan_tail", "_sync_vff_scan_tail;", "_sync_vff_")
+    cdef("sync_user_abort", "_sync_vff_abort;", "_sync_vff_")
+    
+    closes  # closes fast shutter (blocks xrays from sample, last door in the hutch) 
+    
+    # assume the ff camera will stay in place
+    if (NF_EXISTS == 1) {                
+        printf("\n nf setup exists. Moving nf camera and ome in place for ff measurements...")
+        if (FURNACE_ON == 1) {
+	    printf("\nfurnace is on, moving into furnace position...\n")    	
+	    set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
+            umv nfy NFY_FURN_OUT
+            umv nfx NFX_FURN_OUT
+            umv ome 0
+        } else {
+            set_lm nfy NFY_LOW NFY_HIGH   #rams set-up         
+	    
+            umv nfy 15 
+            umv nfx NFX_OUT 
+            umv ome 0
+
+	    #umv nfxm 35 #mobile set-up
+        }
+    } else  {
+        printf("\nNo need to move nf setup as it dose not exist.")
+    } 
+    
+    
+    #printf("\nMoving cave slits...") #w2 x-1.5 is good
+    #umv cslitw 7
+    #umv cslitx -3.5
+    closes
+    find_foil   # inserts metal energy calibration foils
+    #printf("\nSetting ion chamber gains...")
+    #set_ic_gain ic0 14
+    #set_ic_gain ic1 10
+    #set_ic_gain ic2 10
+    #set_ic_gain ic3 10
+    _sr570_log  # logs info about ion chambers
+    printf("\nOpening garage door...")
+    open_garage_door
+
+    printf("\nPlacing Default FF Attenuation...")
+    atten FF_ATT_DEF    # sets atten to high value for equipment safety
+    #umv att FF_attf_DEF
+    #umv attf FF_ATTA_DEF
+
+    SYNC_VFF_MODE = 1   
+    comment "vff is on"
+}'
+
+
+def sync_vff_off '{
+    printf("\nRemoving vff scan parameters...")
+    cdef("", "", "_sync_vff_", "delete")
+    printf("\nClosing garage door...")
+    close_garage_door
+    #printf("\nSetting sync_vff mode to 0...")
+    SYNC_VFF_MODE = 0    
+    comment "vff is off"
+}'
+
+#####################
+# far-field support #
+#####################
+
+# dexela or ge
+global SYNC_FF_DETECTOR, SYNC_FF_MODE
+#SYNC_FF_DETECTOR = "ge"
+#SYNC_FF_DETECTOR = "dexela"
+
+def ff_det '{  
+    
+    _ff_det("$1")
+
+}'
+
+def _ff_det(det_name) '{
+    if (det_name == 0) {
+        det_name = getsval("\nDetector name (lower case): dexela or ge", SYNC_FF_DETECTOR)
+    }    
+    while ((det_name != "dexela") && (det_name != "ge")) {
+        det_name = getsval("\nDetector name (lower case): dexela, ge or pil6", SYNC_FF_DETECTOR)
+    }   
+
+    SYNC_FF_DETECTOR = det_name    
+}'
+
+
+def _sync_ff_newfile '{
+    _1 = sprintf("%s/%s/ff", DAQROOT, DAQID)
+    if (!file_info(_1, "-d")){
+        unix(sprintf("mkdir -p %s", _1))
+    }
+    if (SYNC_FF_DETECTOR == "ge") {
+        epics_put("GE2:cam1:FilePath", sprintf("Z:/%s/ff", DAQID))
+        epics_put("GE2:cam1:FileName", "ff")
+    } else {
+        #epics_put("DEX1:TIFF1:FilePath", sprintf("Z:/%s/ff", DAQID))
+        #epics_put("DEX1:TIFF1:FileName", "ff1")
+        #epics_put("DEX2:TIFF1:FilePath", sprintf("Z:/%s/ff", DAQID))
+        #epics_put("DEX2:TIFF1:FileName", "ff2")
+        
+
+	epics_put("DEX1:HDF1:FilePath", sprintf("Z:/%s/ff", DAQID))
+        epics_put("DEX1:HDF1:FileName", "ff1")
+        epics_put("DEX1:HDF1:FileTemplate", "%s%s_%6.6d.h5")
+	epics_put("DEX1:HDF1:AutoIncrement", 1)
+	epics_put("DEX1:HDF1:EnableCallbacks", 1)
+        
+
+
+	epics_put("DEX2:HDF1:FilePath", sprintf("Z:/%s/ff", DAQID))
+        epics_put("DEX2:HDF1:FileName", "ff2")
+        epics_put("DEX2:HDF1:FileTemplate", "%s%s_%6.6d.h5")
+	epics_put("DEX2:HDF1:AutoIncrement", 1)
+	epics_put("DEX2:HDF1:EnableCallbacks", 1)
+
+    }
+}'
+
+
+def _sync_ff_abort '{
+    if (SYNC_FF_DETECTOR == "ge") {
+        epics_put("GE2:cam1:Acquire", "Done")
+        epics_put("GE2:cam1:DFNAutoScrubOnOff", 1)
+    } else {
+        epics_put("DEX1:cam1:Acquire", "Done")
+        epics_put("DEX2:cam1:Acquire", "Done")
+    }
+}'
+
+
+def _sync_ff_scan_head '{
+    _sync_ff_newfile
+    if (SYNC_FF_DETECTOR == "ge") {
+    
+	#added 022816 - ZB
+	epics_par("GE2:cam1:NumImages", "connect")
+	epics_par("GE2:cam1:FilePath", "connect")
+	epics_par("GE2:cam1:FileName_RBV", "connect")
+	epics_par("GE2:cam1:FileNumber", "connect")
+
+	epics_par("GE2:cam1:NumImages", "timeout", 2.0)
+	epics_par("GE2:cam1:FilePath", "timeout", 2.0)
+	epics_par("GE2:cam1:FileName_RBV", "timeout", 2.0)
+	epics_par("GE2:cam1:FileNumber", "timeout", 2.0)
+	#
+	
+        epics_put("GE2:cam1:NumImages", NPTS)
+        epics_put("GE2:cam1:AcquireTime", _ctime)
+        comment "FF saving images to %s/%s_%6.6d.ge2" "epics_get(\"GE2:cam1:FilePath\", \"string\"), epics_get(\"GE2:cam1:FileName_RBV\", \"string\"), epics_get(\"GE2:cam1:FileNumber\")"
+        epics_put("GE2:cam1:Acquire", "Acquire")
+        _ad_wait_acquire
+    } else {
+	epics_put("DEX1:HDF1:NumCapture", NPTS+10) #10 slack images added 6/15/20 DCP
+        epics_put("DEX2:HDF1:NumCapture", NPTS+10)        
+
+	epics_put("DEX1:cam1:NumImages", NPTS+10)
+        epics_put("DEX2:cam1:NumImages", NPTS+10)
+        #comment "FF1 saving five junk images starting with %s/%s_%6.6d.tiff" "epics_get(\"DEX1:TIFF1:FilePath\", \"string\"), epics_get(\"DEX1:TIFF1:FileName_RBV\", \"string\"), epics_get(\"DEX1:TIFF1:FileNumber\")"
+        #comment "FF1 saving good images starting with %s/%s_%6.6d.tiff" "epics_get(\"DEX1:TIFF1:FilePath\", \"string\"), epics_get(\"DEX1:TIFF1:FileName_RBV\", \"string\"), epics_get(\"DEX1:TIFF1:FileNumber\")+5"
+        #comment "FF2 saving five junk images starting with %s/%s_%6.6d.tiff" "epics_get(\"DEX2:TIFF1:FilePath\", \"string\"), epics_get(\"DEX2:TIFF1:FileName_RBV\", \"string\"), epics_get(\"DEX2:TIFF1:FileNumber\")"
+        #comment "FF2 saving good images starting with %s/%s_%6.6d.tiff" "epics_get(\"DEX2:TIFF1:FilePath\", \"string\"), epics_get(\"DEX2:TIFF1:FileName_RBV\", \"string\"), epics_get(\"DEX2:TIFF1:FileNumber\")+5"
+	comment "FF1 saving four junk images at the front of %s/%s_%6.6d.h5" "epics_get(\"DEX1:HDF1:FilePath\", \"string\"), epics_get(\"DEX1:HDF1:FileName_RBV\", \"string\"), epics_get(\"DEX1:HDF1:FileNumber\")"
+        comment "FF2 saving four junk images at the front of %s/%s_%6.6d.h5" "epics_get(\"DEX2:HDF1:FilePath\", \"string\"), epics_get(\"DEX2:HDF1:FileName_RBV\", \"string\"), epics_get(\"DEX2:HDF1:FileNumber\")"
+        #comment "epics put DEX1 Acquire" 
+	epics_put("DEX1:HDF1:Capture", "Capture")
+        epics_put("DEX2:HDF1:Capture", "Capture")  
+       
+	epics_put("DEX1:cam1:Acquire", "Acquire")
+        epics_put("DEX2:cam1:Acquire", "Acquire")
+    }
+}'
+
+
+def _sync_ff_scan_tail '{
+    if (SYNC_FF_DETECTOR == "ge") {
+        _ad_wait_idle
+        comment " leaving _sync_ff_scan_tail"	
+        sleep(1)
+        comment "FF1 saved last image to %s" "epics_get(\"GE2:cam1:FullFileName_RBV\", \"string\")"
+    } else {
+        epics_put("DEX1:cam1:Acquire", "Done")
+        epics_put("DEX2:cam1:Acquire", "Done")
+	while (epics_get("DEX1:HDF1:QueueFree") < epics_get("DEX1:HDF1:QueueSize")) {
+	  sleep(0.1)
+        }
+	while (epics_get("DEX2:HDF1:QueueFree") < epics_get("DEX2:HDF1:QueueSize")) {
+	  sleep(0.1)
+        }
+        sleep(1)
+
+
+        
+        
+	epics_put("DEX1:HDF1:Capture", "Done")
+        epics_put("DEX2:HDF1:Capture", "Done")
+
+        
+	while (epics_get("DEX1:HDF1:WriteFile_RBV")!= "Done"){
+	  sleep(0.1)
+        }
+        while (epics_get("DEX2:HDF1:WriteFile_RBV")!= "Done"){
+	  sleep(0.1)
+        }
+        
+	comment "FF1 saved last image to %s" "epics_get(\"DEX1:HDF1:FullFileName_RBV\", \"string\")"
+    comment "FF2 saved last image to %s" "epics_get(\"DEX2:HDF1:FullFileName_RBV\", \"string\")"
+
+    }
+}'
+
+
+def sync_ff_on '{
+    printf("\n***Remember to use appropriate attenuation***")
+    printf("\nSetting directories for ff...")
+   _sync_ff_newfile   
+    if (SYNC_FF_DETECTOR == "ge") {
+        printf("\nConfiguring ff trigger mode...")
+        epics_put("GE2:cam1:TriggerMode", 5)
+    } else {
+        printf("\nConfiguring ff1 image mode...")
+        epics_put("DEX1:cam1:ImageMode", 1) # multiple, single is bugged
+        printf("\nConfiguring ff2 image mode...")
+        epics_put("DEX2:cam1:ImageMode", 1)
+        printf("\nConfiguring ff1 trigger mode...")
+        epics_put("DEX1:cam1:TriggerMode", 5)
+        printf("\nConfiguring ff2 trigger mode...")
+        epics_put("DEX2:cam1:TriggerMode", 5)
+    }
+    sleep(5)
+    printf("\nConfiguring ff new file...")
+    cdef("user_newfile", "_sync_ff_newfile;", "_sync_ff_")
+    printf("\nConfiguring ff scan parameters...")
+    cdef("sync_user_scan_head", "_sync_ff_scan_head;", "_sync_ff_")
+    cdef("sync_user_scan_tail", "_sync_ff_scan_tail;", "_sync_ff_")
+    cdef("sync_user_abort", "_sync_ff_abort;", "_sync_ff_")
+    closes
+    if (NF_EXISTS == 1) {                
+        printf("\n nf setup exists. Moving nf camera and ome in place for ff measurements...")
+        if (FURNACE_ON == 1) {
+	    printf("\nfurnace is on, moving into furnace position...\n")    	
+	    set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
+            umv nfy NFY_FURN_OUT
+            umv nfx NFX_FURN_OUT
+            umv ome 0
+        } else {
+            set_lm nfy NFY_LOW NFY_HIGH   #rams set-up         
+	    
+            umv nfy 15 
+            umv nfx NFX_OUT 
+            umv ome 0
+
+	    #umv nfxm 35 #mobile set-up
+        }
+    } else  {
+        printf("\nNo need to move nf setup as it does not exist.")
+    } 
+    
+    
+    #printf("\nMoving cave slits...") #w2 x-1.5 is good
+    #umv cslitw 7
+    #umv cslitx -3.5
+    closes
+    find_foil 
+    #printf("\nSetting ion chamber gains...")
+    #set_ic_gain ic0 14
+    #set_ic_gain ic1 10
+    #set_ic_gain ic2 10
+    #set_ic_gain ic3 10
+    _sr570_log
+    printf("\nOpening garage door...")
+    open_garage_door
+
+    printf("\nPlacing Default FF Attenuation...")
+    atten FF_ATT_DEF
+    #umv att FF_attf_DEF
+    #umv attf FF_ATTA_DEF
+
+    SYNC_FF_MODE = 1
+    comment "ff is on"
+}'
+
+
+def sync_ff_off '{
+    if (SYNC_FF_DETECTOR == "ge"){
+        # put detector acquistion type to MULTI_DET_sw
+        epics_put("GE2:cam1:TriggerMode", 2)
+    }
+
+    printf("\nRemoving ff scan parameters...")
+    cdef("", "", "_sync_ff_", "delete")
+    printf("\nClosing garage door...")
+    close_garage_door
+    #printf("\nSetting sync_ff mode to 0...")
+    SYNC_FF_MODE = 0
+    comment "ff is off"
+}'
+
+
+######################
+# near-field support #
+######################
+
+global SYNC_NF_MODE, NF_EXISTS, SYNC_NF_DETECTOR
+
+
+def nf_det '{
+    _nf_det("$1")
+}'
+
+
+def _nf_det(det_name) '{
+    if (det_name == 0) {
+        det_name = getsval("\nDetector name (lower case): manta or retiga", SYNC_NF_DETECTOR)
+    }
+    while ((det_name != "manta") && (det_name != "retiga")) {
+        det_name = getsval("\nDetector name (lower case): manta or retiga", SYNC_NF_DETECTOR)
+    }     
+    SYNC_NF_DETECTOR = det_name    
+}'
+
+
+
+
+def nf_exists '{
+    local i, m[], n
+
+    if ($# == 0) {
+	eprint "Usage:  motor_exist motor [motor ...]"
+	exit
+    }
+    n = split("$*", m)
+    for (i in m)
+	if ((m[i] = motor_num(t = m[i])) < 0) {	    
+	    NF_EXISTS = 0
+	    break
+	} else {    
+	    NF_EXISTS = 1
+	
+        }
+    if (NF_EXISTS == 1) {
+        p "Near-field setup exists"
+    
+    } else {
+        p "Near-field setup does not exist"
+    }
+}'
+
+
+### checks whether nfx, nfy, nfz exist, and sets NF_EXISTS to 1 if all three are there.
+nf_exists nfx nfy nfz
+
+
+def _sync_nf_newfile '{
+    _1 = sprintf("%s/%s/nf", DAQROOT, DAQID)
+    if (!file_info(_1, "-d")){
+        unix(sprintf("mkdir -p %s", _1))
+    }
+    if (SYNC_NF_DETECTOR == "retiga") {
+        epics_put("QIMAGE1:TIFF1:FilePath", sprintf("Z:/%s/nf", DAQID))
+        epics_put("QIMAGE1:TIFF1:FileName", "nf")
+    } else if (SYNC_NF_DETECTOR == "manta") {
+        epics_put("Manta1:TIFF1:FilePath", sprintf("/mnt/currentdaq/%s/nf", DAQID))
+        epics_put("Manta1:TIFF1:FileName", "nf")
+    }
+}'
+
+
+def _sync_nf_abort '{
+    if (SYNC_NF_DETECTOR == "retiga") {    
+        epics_put("QIMAGE1:TIFF1:EnableCallbacks", 0)
+    } else if (SYNC_NF_DETECTOR == "manta") {
+        epics_put("Manta1:cam1:Acquire", 0)
+        epics_put("Manta1:TIFF1:EnableCallbacks", 0)        
+    }    
+}'
+
+
+def _sync_nf_scan_head '{
+    _sync_nf_newfile
+    
+    if (SYNC_NF_DETECTOR == "retiga") {   
+        comment "NF saving five junk images starting with %s/%s_%6.6d.tif" "epics_get(\"QIMAGE1:TIFF1:FilePath\", \"string\"), epics_get(\"QIMAGE1:TIFF1:FileName_RBV\", \"string\"), epics_get(\"QIMAGE1:TIFF1:FileNumber\")"
+        comment "NF saving good images starting with %s/%s_%6.6d.tif" "epics_get(\"QIMAGE1:TIFF1:FilePath\", \"string\"), epics_get(\"QIMAGE1:TIFF1:FileName_RBV\", \"string\"), epics_get(\"QIMAGE1:TIFF1:FileNumber\")+5"
+        epics_put("QIMAGE1:cam1:ImageMode", 0) #Single
+        epics_put("QIMAGE1:cam1:TriggerMode", 7) #StrobeLow    
+        epics_put("QIMAGE1:cam1:NumImages", 1)
+        epics_put("QIMAGE1:TIFF1:EnableCallbacks", 1)
+        #while (epics_get("QIMAGE1:cam1:TIFF1:EnableCallbacks_RBV") != "Enable") {
+        #    sleep(0.05)
+        #}
+        epics_put("QIMAGE1:cam1:AcquireTime", _ctime)
+        epics_put("QIMAGE1:cam1:AcquirePeriod", _ctime)
+        epics_put("QIMAGE1:cam1:qInitialize", 1)
+        p "Turning off hutch light..."
+        hutch_light_off
+        sleep(1)
+        epics_put("QIMAGE1:cam1:Acquire", 1)
+        while (epics_get("QIMAGE1:cam1:DetectorState_RBV") != "Acquire") {
+            sleep(0.05)
+        }
+
+    } else if (SYNC_NF_DETECTOR == "manta") {
+        if (RAMS_EXISTS == 1) {
+            comment "NF saving five junk images starting with %s/%s_%6.6d.tif" "epics_get(\"Manta1:TIFF1:FilePath\", \"string\"), epics_get(\"Manta1:TIFF1:FileName_RBV\", \"string\"), epics_get(\"Manta1:TIFF1:FileNumber\")"
+            comment "NF saving good images starting with %s/%s_%6.6d.tif" "epics_get(\"Manta1:TIFF1:FilePath\", \"string\"), epics_get(\"Manta1:TIFF1:FileName_RBV\", \"string\"), epics_get(\"Manta1:TIFF1:FileNumber\")+5"
+        } else {
+            comment "NF saving good images starting with %s/%s_%6.6d.tif" "epics_get(\"Manta1:TIFF1:FilePath\", \"string\"), epics_get(\"Manta1:TIFF1:FileName_RBV\", \"string\"), epics_get(\"Manta1:TIFF1:FileNumber\")+0"           
+        }
+
+        epics_put("Manta1:cam1:ImageMode", 1) #Multiple
+        epics_put("Manta1:cam1:TriggerMode", 1) #Sync In 1
+        epics_put("Manta1:cam1:TriggerEvent", 0) #Rising edge - access this PV in I/O setup & statistics
+        epics_put("Manta1:cam1:TriggerDelay", 0) #access this PV in I/O setup & statistics
+        epics_put("Manta1:cam1:TriggerOverlap", 1) #Previous frame - access this PV in I/O setup & statistics
+        epics_put("Manta1:cam1:NumImages", NPTS+10) #10 images buffer added by DCP 1/21/21        
+        epics_put("Manta1:cam1:AcquireTime", _ctime)
+        epics_put("Manta1:cam1:AcquirePeriod", _ctime)
+        epics_put("Manta1:TIFF1:EnableCallbacks", 1)
+        p "Turning off hutch light..."
+        hutch_light_off
+        sleep(1)
+        epics_put("Manta1:cam1:Acquire", 1)
+        while (epics_get("Manta1:cam1:DetectorState_RBV") != "Acquire") {
+            sleep(0.05)
+        }
+    }
+}'
+
+
+
+def _sync_nf_scan_tail '{
+    # give the file plugin time to save the last image:
+    sleep(1)
+    if (SYNC_NF_DETECTOR == "retiga") {
+        comment "NF saved last image to %s" "epics_get(\"QIMAGE1:TIFF1:FullFileName_RBV\", \"string\")"
+        epics_put("QIMAGE1:TIFF1:EnableCallbacks", 0)
+        epics_put("QIMAGE1:cam1:Acquire", 0)
+    } else if (SYNC_NF_DETECTOR == "manta"){
+        #epics_put("Manta1:TIFF1:Capture", "Done") #added DCP 1/22/21
+	epics_put("Manta1:cam1:Acquire", 0) #added DCP 1/22/21
+	while (epics_get("Manta1:cam1:DetectorState_RBV") != "Idle") {
+            sleep(0.05)
+        }
+        sleep(0.2)
+        comment "NF saved last image to %s" "epics_get(\"Manta1:TIFF1:FullFileName_RBV\", \"string\")"
+        epics_put("Manta1:TIFF1:EnableCallbacks", 0)
+	#epics_put("Manta1:cam1:Acquire", 0)
+        
+    }
+    sleep(0.5)
+    hutch_light_on
+}'
+
+
+
+
+def sync_nf_on '{
+    if (NF_STREAMING == 1) {
+        nf_stream_off
+    }
+    printf("\nSetting directories for nf...")
+    _sync_nf_newfile    
+	
+		
+    if (SYNC_NF_DETECTOR == "retiga") {   
+        printf("\nSetting nf acquire mode...")
+        epics_put("QIMAGE1:cam1:Acquire", 0)
+        printf("\nObtaining nf detector status...")
+        while (epics_get("QIMAGE1:cam1:DetectorState_RBV") != "Idle") {
+            printf("\nWaiting...")
+            sleep(0.05)
+        }
+        printf("\nConfiguring nf image mode...")
+        epics_put("QIMAGE1:cam1:ImageMode", 0) #Single
+        printf("\nConfiguring nf trigger mode...")
+        epics_put("QIMAGE1:cam1:TriggerMode", 7) #StrobeLow
+        printf("\nConfiguring nf number of images...")
+        epics_put("QIMAGE1:cam1:NumImages", 1)
+        printf("\nInitializing nf detector...")
+        epics_put("QIMAGE1:cam1:qInitialize", 1)
+    } else if (SYNC_NF_DETECTOR == "manta") {
+        printf("\nSetting nf acquire mode...")
+        epics_put("Manta1:cam1:Acquire", 0)
+        printf("\nObtaining nf detector status...")
+        while (epics_get("Manta1:cam1:DetectorState_RBV") != "Idle") {
+            printf("\nWaiting...")
+            sleep(0.05)
+        }
+        printf("\nConfiguring nf image mode...")
+        epics_put("Manta1:cam1:ImageMode", 1) #Multiple
+        printf("\nConfiguring nf trigger mode...")
+        epics_put("Manta1:cam1:TriggerMode", 1) #Sync In 1
+        printf("\nConfiguring nf trigger event...")
+        epics_put("Manta1:cam1:TriggerEvent", 0) #Rising edge - access this PV in I/O setup & statistics
+        printf("\nConfiguring nf trigger delay to 0...")
+        epics_put("Manta1:cam1:TriggerDelay", 0) #access this PV in I/O setup & statistics
+        printf("\nConfiguring nf trigger overlap...")
+        epics_put("Manta1:cam1:TriggerOverlap", 1) #Previous frame - access this PV in I/O setup & statistics
+        printf("\nConfiguring nf number of images...")
+        epics_put("Manta1:cam1:NumImages", NPTS)
+        printf("\nConfiguring nf count time...")
+        epics_put("Manta1:cam1:AcquireTime", _ctime) 
+        epics_put("Manta1:cam1:AcquirePeriod", _ctime)
+    }
+    sleep(1)
+    printf("\nConfiguring nf new file...")
+    cdef("user_newfile", "_sync_nf_newfile;", "_sync_nf_")
+    printf("\nConfiguring nf scan parameters...")
+    cdef("sync_user_scan_head", "_sync_nf_scan_head;", "_sync_nf_")   
+    cdef("sync_user_scan_tail", "_sync_nf_scan_tail;", "_sync_nf_")
+    cdef("sync_user_abort", "_sync_nf_abort;", "_sync_nf_")
+    printf("\nClosing garage door...")
+    close_garage_door
+    closes
+    printf("\nSetting Default Attenuation...")
+    atten NF_ATT_DEF
+
+
+    ### uncomment the next two lines for rams2 mode ###
+    set_lm ramsx -5.405 0.04      
+    umv ramsx 0
+
+
+    #movements for putting nearfield camera into place
+    printf("\nMoving nf camera in place for nf measurements...")
+
+    if (FURNACE_ON == 1) {
+	printf("\nfurnace is on, moving into furnace position...\n")    	
+	set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
+	#mmv nfx 0 nfbsz 0
+	umv nfx NFX_IN_DEF 
+	umv nfbsz 0
+	umv nfy NFY_FURN_POS 
+    } else {    
+        ### regular nf ###
+	set_lm nfy NFY_LOW NFY_HIGH #rams set-up		
+	#mmv nfx 0 nfbsz 0
+	umv nfx NFX_IN_DEF 
+	umv nfbsz 0
+	umv nfy NFY_POS
+	
+        #umv nfxm 0 #mobile set-up
+
+    }
+
+    
+    #printf("\nMoving cave slits...")
+    #umv cslitw 7
+    #umv cslitx -3.5
+
+    #Remove foil
+    remove_foils
+
+    #printf("\nSetting ion chamber gains...")
+    #set_ic_gain ic0 14
+    #set_ic_gain ic1 10
+    #set_ic_gain ic2 10
+    #set_ic_gain ic3 10
+    #_sr570_log
+    comment "nf is on"
+    #wm nfx nfy
+    SYNC_NF_MODE = 1
+}'
+
+
+
+
+def sync_nf_off '{
+    if (NF_STREAMING == 1) {
+        nf_stream_off
+    }
+    closes
+	
+    if (SYNC_NF_DETECTOR == "retiga") {
+        printf("\nPreparing QIMAGE1:cam1 for sync_nf_off mode...")
+        epics_put("QIMAGE1:cam1:Acquire", 0)
+        sleep(0.5)    
+        epics_put("QIMAGE1:cam1:ImageMode", 2) #Continuous
+        epics_put("QIMAGE1:cam1:TriggerMode", 5) #Software
+        epics_put("QIMAGE1:cam1:AcquireTime", 1)
+        epics_put("QIMAGE1:TIFF1:EnableCallbacks", 0)
+        epics_put("QIMAGE1:cam1:qInitialize", 1)
+    } else if (SYNC_NF_DETECTOR == "manta") {
+        printf("\nPreparing Manta1:cam1 for sync_nf_off mode...")
+        epics_put("Manta1:cam1:Acquire", 0)
+        sleep(0.5)    
+        epics_put("Manta1:cam1:ImageMode", 2) #Continuous
+        epics_put("Manta1:cam1:TriggerMode", 6) #Software
+        epics_put("Manta1:cam1:AcquireTime", 1)
+        epics_put("Manta1:cam1:AcquirePeriod", 1)
+        epics_put("Manta1:TIFF1:EnableCallbacks", 0)        
+    }	
+    sleep(1)
+    printf("\nRemoving nf scan parameters...")
+    cdef("", "", "_sync_nf_", "delete")
+    printf("\nTurning on hutch light...")
+    hutch_light_on
+    printf("\nPlacing nf camera for ff measurements...")
+    if (FURNACE_ON == 1) {
+	printf("\nfurnace is on, moving into furnace position...\n")    	
+	set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
+        umv nfy NFY_FURN_OUT
+        umv nfx NFX_FURN_OUT
+        umv ome 0
+    } else {
+	#set_lm nfy NFY_LOW NFY_HIGH #rams set-up	 			
+        umv nfy 15 
+        umv nfx NFX_OUT 
+        umv ome 0
+
+	#umv nfxm 35 #mobile set-up
+    } 
+    SYNC_NF_MODE = 0
+    comment "nf is off"
+}'
+
+
+
+def _sync_nf_multiple_exp(_exposures, _time) '{
+    set_daqdir_no_scan
+	
+    if (SYNC_NF_DETECTOR == "retiga") {      	
+        epics_put("QIMAGE1:TIFF1:FilePath", sprintf("Z:/%s/nf", DAQID))
+        epics_put("QIMAGE1:TIFF1:FileName", "nf")       
+        epics_put("QIMAGE1:cam1:ImageMode", 1) #Multiple
+        epics_put("QIMAGE1:cam1:TriggerMode", 5) #Software
+        epics_put("QIMAGE1:cam1:AcquireTime", _time)
+        epics_put("QIMAGE1:cam1:AcquirePeriod", _time)
+        epics_put("QIMAGE1:cam1:NumImages", _exposures)
+        epics_put("QIMAGE1:TIFF1:EnableCallbacks", 1)
+        epics_put("QIMAGE1:cam1:qInitialize", 1)
+        hutch_light_off    
+        sleep(1)
+        epics_put("QIMAGE1:cam1:Acquire", 1)
+        while (epics_get("QIMAGE1:cam1:DetectorState_RBV") != "Acquire") {
+            sleep(0.1)
+        }
+        while (epics_get("QIMAGE1:cam1:DetectorState_RBV") == "Acquire") {
+            sleep(0.1)        
+        }    
+        sleep(10)
+        closes
+        epics_put("QIMAGE1:TIFF1:EnableCallbacks", 0)
+        epics_put("QIMAGE1:cam1:Acquire", 0)
+        sleep(0.5)
+        comment "NF saved last image to %s" "epics_get(\"QIMAGE1:TIFF1:FullFileName_RBV\", \"string\")"
+    } else if (SYNC_NF_DETECTOR == "manta") {
+        epics_put("Manta1:TIFF1:FilePath", sprintf("/mnt/currentdaq/%s/nf", DAQID))
+        epics_put("Manta1:TIFF1:FileName", "nf")       
+        epics_put("Manta1:cam1:ImageMode", 1) #Multiple
+        epics_put("Manta1:cam1:TriggerMode", 6) #Software
+        epics_put("Manta1:cam1:AcquireTime", _time)
+        epics_put("Manta1:cam1:AcquirePeriod", _time)
+        epics_put("Manta1:cam1:NumImages", _exposures)
+        epics_put("Manta1:TIFF1:EnableCallbacks", 1)
+        hutch_light_off    
+        sleep(1)
+        epics_put("Manta1:cam1:Acquire", 1)
+        while (epics_get("Manta1:cam1:DetectorState_RBV") != "Acquire") {
+            sleep(0.1)
+        }
+        while (epics_get("Manta1:cam1:DetectorState_RBV") == "Acquire") {
+            sleep(0.1)        
+        }    
+        sleep(10)
+        closes        
+        epics_put("Manta1:TIFF1:EnableCallbacks", 0)
+        epics_put("Manta1:cam1:Acquire", 0)
+        sleep(0.5)
+        comment "NF saved last image to %s" "epics_get(\"Manta1:TIFF1:FullFileName_RBV\", \"string\")"
+    }
+    sleep(0.5)    
+    hutch_light_on
+}'
+
+
+def sync_nf_multiple_exp '{
+    local _nexposures, _count_time
+    if (($# < 2) || ($# > 3)) {
+        eprint "Usage:  sync_nf_multiple_exp n_exposures ctime [brightfield|darkfield]"
+	exit
+    }
+
+    if (($3 != 0) && ("$3" != "brightfield") && ("$3" != "darkfield")) {
+        eprint "if argument 3 is specified, it must be brightfield or darkfield"
+        exit
+    }  
+    _sync_nf_newfile    
+    _nexposures = $1
+    _count_time = $2
+    
+    if ("$3" == "darkfield") {        
+        comment "sync_nf_multiple_exp darkfield %d %g" "_nexposures, _count_time"
+        closes
+    
+    } else {
+        comment "sync_nf_multiple_exp %d %g" "_nexposures, _count_time"
+        opens
+        beamstop_open_check        
+    
+    }
+    _sync_nf_multiple_exp(_nexposures, _count_time)
+}'
+
+
+################
+# Tomo support #
+################
+def sync_tomo_on '{
+    #identical to sync_nf_on except for nfbsz position
+    if (NF_STREAMING == 1) {
+        nf_stream_off
+    }
+    printf("\nSetting directories for nf...")
+    _sync_nf_newfile  #need to change for tomo?   
+        if (SYNC_NF_DETECTOR == "retiga") {   
+        printf("\nSetting nf acquire mode...")
+        epics_put("QIMAGE1:cam1:Acquire", 0)
+        printf("\nObtaining nf detector status...")
+        while (epics_get("QIMAGE1:cam1:DetectorState_RBV") != "Idle") {
+            printf("\nWaiting...")
+            sleep(0.05)
+        }
+        printf("\nConfiguring nf image mode...")
+        epics_put("QIMAGE1:cam1:ImageMode", 0) #Single
+        printf("\nConfiguring nf trigger mode...")
+        epics_put("QIMAGE1:cam1:TriggerMode", 7) #StrobeLow
+        printf("\nConfiguring nf number of images...")
+        epics_put("QIMAGE1:cam1:NumImages", 1)
+        printf("\nInitializing nf detector...")
+        epics_put("QIMAGE1:cam1:qInitialize", 1)
+    } else if (SYNC_NF_DETECTOR == "manta") {
+        printf("\nSetting nf acquire mode...")
+        epics_put("Manta1:cam1:Acquire", 0)
+        printf("\nObtaining nf detector status...")
+        while (epics_get("Manta1:cam1:DetectorState_RBV") != "Idle") {
+            printf("\nWaiting...")
+            sleep(0.05)
+        }
+        printf("\nConfiguring nf image mode...")
+        epics_put("Manta1:cam1:ImageMode", 1) #Multiple
+        printf("\nConfiguring nf trigger mode...")
+        epics_put("Manta1:cam1:TriggerMode", 1) #Sync In 1
+        printf("\nConfiguring nf trigger event...")
+        epics_put("Manta1:cam1:TriggerEvent", 0) #Rising edge - access this PV in I/O setup & statistics
+        printf("\nConfiguring nf trigger delay to 0...")
+        epics_put("Manta1:cam1:TriggerDelay", 0) #access this PV in I/O setup & statistics
+        printf("\nConfiguring nf trigger overlap...")
+        epics_put("Manta1:cam1:TriggerOverlap", 1) #Previous frame - access this PV in I/O setup & statistics
+        printf("\nConfiguring nf number of images...")
+        epics_put("Manta1:cam1:NumImages", NPTS)
+        printf("\nConfiguring nf count time...")
+        epics_put("Manta1:cam1:AcquireTime", _ctime) 
+        epics_put("Manta1:cam1:AcquirePeriod", _ctime)
+    }
+
+    sleep(1)
+    printf("\nConfiguring nf new file...")
+    cdef("user_newfile", "_sync_nf_newfile;", "_sync_nf_") #need to change for tomo?
+    printf("\nConfiguring nf scan parameters...")
+    cdef("sync_user_scan_head", "_sync_nf_scan_head;", "_sync_nf_")   
+    cdef("sync_user_scan_tail", "_sync_nf_scan_tail;", "_sync_nf_")
+    cdef("sync_user_abort", "_sync_nf_abort;", "_sync_nf_") #need to change for tomo?
+    printf("\nClosing garage door...")
+    close_garage_door
+    closes   
+    
+
+    printf("\nSetting Default Attenuation...")
+    atten NF_ATT_DEF #need to change for tomo?
+
+
+    ### uncomment the next two lines for rams2 mode ###
+    set_lm ramsx -5.405 0.04 
+    umv ramsx 0
+
+
+    #movements for putting nearfield camera into place
+    printf("\nMoving nf camera in place for tomo measurements...")
+
+    if (FURNACE_ON == 1) {
+	printf("\nfurnace is on, moving into furnace position...\n")    	
+	set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
+	#mmv nfx 0 nfbsz 0
+	umv nfx NFX_IN_DEF 
+	umv nfbsz 2
+	umv nfy NFY_FURN_POS 
+    } else {    
+        ### regular nf ###
+	set_lm nfy NFY_LOW NFY_HIGH #rams set-up		
+	#mmv nfx 0 nfbsz 0
+	umv nfx NFX_IN_DEF 
+	umv nfbsz 2
+	umv nfy NFY_POS
+	
+        #umv nfxm 0 #mobile set-up
+
+    }
+
+    
+    #printf("\nMoving cave slits...")
+    #umv cslitw 7
+    #umv cslitx -3.5
+
+    #Remove foil
+    remove_foils
+
+    #printf("\nSetting ion chamber gains...")
+    #set_ic_gain ic0 14
+    #set_ic_gain ic1 10
+    #set_ic_gain ic2 10
+    #set_ic_gain ic3 10
+    #_sr570_log
+    comment "nf is on"
+    #wm nfx nfy
+    SYNC_NF_MODE = 1 #need to change for tomo?
+}'
+
+def sync_tomo_off '{
+    if (NF_STREAMING == 1) {
+        nf_stream_off
+    }
+    if (SYNC_NF_DETECTOR == "retiga") {
+        printf("\nPreparing QIMAGE1:cam1 for sync_nf_off mode...")
+        epics_put("QIMAGE1:cam1:Acquire", 0)
+        sleep(0.5)    
+        epics_put("QIMAGE1:cam1:ImageMode", 2) #Continuous
+        epics_put("QIMAGE1:cam1:TriggerMode", 5) #Software
+        epics_put("QIMAGE1:cam1:AcquireTime", 1)
+        epics_put("QIMAGE1:TIFF1:EnableCallbacks", 0)
+        epics_put("QIMAGE1:cam1:qInitialize", 1)
+    } else if (SYNC_NF_DETECTOR == "manta") {
+        printf("\nPreparing Manta1:cam1 for sync_nf_off mode...")
+        epics_put("Manta1:cam1:Acquire", 0)
+        sleep(0.5)    
+        epics_put("Manta1:cam1:ImageMode", 2) #Continuous
+        epics_put("Manta1:cam1:TriggerMode", 6) #Software
+        epics_put("Manta1:cam1:AcquireTime", 1)
+        epics_put("Manta1:cam1:AcquirePeriod", 1)
+        epics_put("Manta1:TIFF1:EnableCallbacks", 0)        
+    }	
+    sleep(1)
+    printf("\nRemoving nf scan parameters...")
+    cdef("", "", "_sync_nf_", "delete")
+    printf("\nTurning on hutch light...")
+    hutch_light_on
+    printf("\nPlacing nf camera for ff measurements...")
+
+    if (FURNACE_ON == 1) {
+	printf("\nfurnace is on, moving into furnace position...\n")    	
+	set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
+        umv nfy NFY_FURN_OUT
+        umv nfx NFX_FURN_OUT
+        umv ome 0
+    } else {
+	#set_lm nfy NFY_LOW NFY_HIGH #rams set-up	 		
+	
+        umv nfy 15 
+        umv nfx NFX_OUT 
+        umv ome 0
+
+	#umv nfxm 35 #mobile set-up
+    }
+ 
+    SYNC_NF_MODE = 0 #need to change for tomo?
+    comment "nf is off"
+}'
+
+###############
+# DIC support #
+###############
+
+
+def dic_exposure '{
+    if ($# < 2) {
+        eprint "Usage:  dic_exposure time [n_images]"
+	exit
+    }
+    set_daqdir_no_scan
+    nimages = nimages? nimages:1
+    _sync_dic_newfile
+    dic_light_on
+    epics_put("PG1:TIFF1:EnableCallbacks", 1, 1)
+    epics_put("PG1:cam1:ImageMode", 1, 1)
+    epics_put("PG1:cam1:AcquireTime", $1, 1)
+    epics_put("PG1:cam1:AcquirePeriod", 1, 1)
+    epics_put("PG1:cam1:TriggerMode", 0, 1)
+    epics_put("PG1:cam1:NumImages", $2, 1)
+    epics_put("PG1:cam1:NumExposures", 1, 1)
+    sleep(0.1)
+    
+    epics_put("PG1:cam1:Acquire", 1, 2)
+    sleep($1*$2)
+    while (epics_get("PG1:cam1:DetectorState_RBV") != "Idle") {
+        sleep(0.05)
+    }
+    dic_light_off
+    while (epics_get("PG1:TIFF1:WriteFile_RBV") != "Done") {
+        sleep(0.05)
+    }
+    comment "DIC image saved to %s" "epics_get(\"PG1:TIFF1:FullFileName_RBV\", \"string\")"
+    epics_put("PG1:TIFF1:EnableCallbacks", 0, 1)
+}'
+
+
+
+
+
+def dic_preimage '{
+    if ($# < 2) {
+        eprint "Usage:  dic_exposure time [n_images]"
+        exit
+    }
+    set_daqdir_no_scan
+    nimages = nimages? nimages:1
+    _sync_dic_newfile
+    light_on
+    epics_put("PG1:TIFF1:EnableCallbacks", 1, 1)
+    epics_put("PG1:cam1:ImageMode", 1, 1)
+    epics_put("PG1:cam1:AcquireTime", $1, 1)
+    epics_put("PG1:cam1:AcquirePeriod", 1, 1)
+    epics_put("PG1:cam1:TriggerMode", 0, 1)
+    epics_put("PG1:cam1:NumImages", $2, 1)
+    epics_put("PG1:cam1:NumExposures", 1, 1)
+    sleep(0.1)
+}'
+
+
+#def dic_exposure_skip_steps '{
+#    epics_put("PG1:cam1:Acquire", 1, 2)
+    #sleep($1*$2)
+#    while (epics_get("PG1:cam1:DetectorState_RBV") != "Idle") {
+#        sleep(0.05)
+#    }
+    #light_off
+#    while (epics_get("PG1:TIFF1:WriteFile_RBV") != "Done") {
+#        sleep(0.05)
+
+#    }
+#    comment "DIC image saved to %s" "epics_get(\"PG1:TIFF1:FullFileName_RBV\", \"string\")"
+    #epics_put("PG1:TIFF1:EnableCallbacks", 0, 1)
+#}'
+
+
+
+def dic_exposure_skip_steps '{
+
+    epics_put("PG1:cam1:Acquire", 1)    
+    sleep(epics_get("PG1:cam1:AcquireTime"))    
+    while (epics_get("PG1:TIFF1:WriteFile_RBV") != "Done") {
+        sleep(0.05)
+    }    
+    comment "DIC image saved to %s" "epics_get(\"PG1:TIFF1:FullFileName_RBV\", \"string\")"         
+}'
+
+
+
+
+
+def stop_dic '{
+    light_off
+    epics_put("PG1:TIFF1:EnableCallbacks", 0)
+}'
+
+
+
+
+def _sync_dic_newfile '{
+    _1 = sprintf("%s/%s/dic", DAQROOT, DAQID)
+    if (!file_info(_1, "-d")){
+        unix(sprintf("mkdir -p %s", _1))
+    }
+    epics_put("PG1:TIFF1:FilePath", sprintf("Z:/%s/dic", DAQID), 1)
+    epics_put("PG1:TIFF1:FileName", "dic", 1)
+}'
+
+
+def sync_dic_on '{
+    _sync_dic_newfile
+    cdef("user_newfile", "_sync_dic_newfile;", "_sync_dic_")
+    comment "DIC is on"
+}'
+
+
+def sync_dic_off '{
+    cdef("", "", "_sync_dic_", "delete")
+    comment "DIC is off"
+}'
+
+
+########################
+# Additional Utilities #
+########################
+
+
+def sync_with_cesr_current() '{
+    local current_minimum
+    current_minimum = LOW_CUR
+    if ((_type != "darkfield") && (epics_get("CESR_BR_CURR") < current_minimum)) {
+        comment "Zero/Low positron current... standby.."
+        while (epics_get("CESR_BR_CURR") < current_minimum) {
+            sleep(5)
+            if (epics_get("CESR_BR_CURR") > current_minimum) {                
+                comment "CESR current above threshold"    
+                break            
+            }              
+        }
+        ### Is CHESS enabled? ###
+        sync_with_chess_enable()
+        comment "Measurment continued"
+    }
+}'
+
+
+
+
+### checking for CHESS enable using the digital input signal via NI card.
+### CHESS enable voltage is from UEI output 1, and is connected to port 1 of the second NI660x card.
+def sync_with_chess_enable() '{
+    if(counter_par(aux1, "get_bit", 3) != 1) {
+        comment "CHESS not enabled.."
+        while (counter_par(aux1, "get_bit", 3) != 1) {
+            sleep(1)
+            if (counter_par(aux1, "get_bit", 3) == 1) {        
+                comment "CHESS enabled"
+                break
+            }
+        }
+    }
+}'
+
+
+
+### checking whether 3A station stops are opened using the digital input signal via NI card.
+### IC0 voltage is connected to port 2 of the second NI660x card.
+def beamstop_open_check '{
+    if ((_type != "darkfield") && (counter_par(aux1, "get_bit",4) != 1)) {
+        comment "Low IC0 count in 3A detected.."
+        printf("\nDid you forget to open the station shutters? Open the stations shutters to continue.")        
+        while (counter_par(aux1, "get_bit",4) != 1) {
+            sleep(1)
+            if (counter_par(aux1, "get_bit",4) == 1) {
+                comment "Station shutters opened"
+                break
+            }
+        }
+    }
+}'
+
+
+def sync_with_local_enable() '{
+    if(counter_par(aux1, "get_bit", 5) != 1) {
+        comment "Station not enabled.."
+        while (counter_par(cenable, "get_bit", 5) != 1) {
+            sleep(1)
+            if (counter_par(cenable, "get_bit", 5) == 1) {        
+                comment "Station enabled"
+                break
+            }
+        }
+    }
+}'
+
+#####################################################
+
+
+
+
+
+
+
+
+def which_mode '{
+    if ((SYNC_FF_MODE == 1) && (SYNC_NF_MODE == 1)) {
+        p "Both modes on. Turn off one of them"
+    }
+    if (SYNC_FF_MODE == 1) {
+        p "FF mode"
+    } else if (SYNC_NF_MODE == 1) {
+        p "NF mode"
+    } else {
+        p "No mode"
+    }   
+
+}'

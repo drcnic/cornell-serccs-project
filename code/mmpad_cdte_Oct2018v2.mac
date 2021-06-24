@@ -557,7 +557,15 @@ def _mmpad_getcounts '
 
 
 def mmpad_set_path '{
-    MMPAD["path"] = getval("Enter MMPAD remote path for images (must exist)", MMPAD["path"]);
+    local val;
+    val = 0;
+    val = "$1";
+
+    while(!val) {
+        val = getval("Enter MMPAD remote path for images (must exist)", MMPAD["path"]);
+    }
+
+    MMPAD["path"] = val;
 }'
 
 # Turns on MMPAD detector power board and Keithley HV power supply:
@@ -584,6 +592,7 @@ def mmpad_server_setup '{
         local val
 
         val = 0
+        val = "$1"
         while(!val) {
             val = getval("Enter MMPAD server IP", MMPAD["server"]);
         }
@@ -601,26 +610,51 @@ def mmpad_server_setup '{
 
         #load detector configuration file startup.cmd (this takes a few seconds):
         #note: this is the step that opens the grab display window
-        print "load detector configuration ./startup.cmd"
+        print "Loading detector configuration ./startup.cmd"
         camserver("ldcmndfile ./startup.cmd", 6)
     } else {
         print "Socket connection already open";
     }
 }'
 
+# sets the trigger mode for the mmpad
+def mmpad_set_trigger '{
+    #set trigger mode:
+    #10/2018 updated the camserver command for setting trigger mode
+    MMPAD["hardware_trigger"] = yesno("Enable hardware trigger?", MMPAD["hardware_trigger"]);
+    
+    if(MMPAD["hardware_trigger"]==0) {
+        #software trigger mode:
+        print "setting software trigger mode"
+        camserver("padcom settrigger 4 0 0",0.1)
+    } else {
+        #hardware trigger mode with 1 trigger per sequence and zero delay from trigger to action:
+        print "setting hardware trigger mode"
+        camserver("padcom settrigger 2 0 0",0.1)
+        camserver("padcom mtrigger 1 1",0.1)
+    }
+}'
 
 # NEEDS TESTING
 def mmpad_on_new '{
     #initialized = socket open, detector power on, Keithley on.
-    if (!MMPAD["initialized"]) {
-        #local str str_n val
+    if (MMPAD["initialized"]) {
+        if(yesno("MMPAD already initialized. Re-initialize?")) {
+            break;
+        } else {
+            exit;
+        }
+    }
 
-        mmpad_detector_setup  # power everything up
+    mmpad_detector_setup  # power everything up
+    
+    if ("$1" == "auto") {   # if called with auto flag, set everything up without user intervention
+        mmpad_server_setup MMPAD["server"];
+        mmpad_set_path MMPAD["path"];
+        mmpad_exposure_time MMPAD["exposure_time"];
+        mmpad_set_trigger;
+    } else {
         mmpad_server_setup    # connect SPEC instance to camserver
-
-        #set flag to save frames in blocks:
-        print "will save frames in blocks"
-        camserver("filestore 1 5",0.1) 
 
         #turn on automatic background subtraction using the most recent dark file:
         #if (MMPAD["dark_file"]) {
@@ -628,15 +662,9 @@ def mmpad_on_new '{
         #    camserver("mmpadcommand milbacksub 1", 0.1)
         #}
         #print "background subtraction turned ON"
-
-        MMPAD["initialized"] = 1
-        print "MMPAD initialized"
     
-        #get path for images:
-        mmpad_set_path;
-    
-        #set exposure time:
-        mmpad_exposure_time;
+        mmpad_set_path;         #get path for images:
+        mmpad_exposure_time;    #set exposure time:
     
         #set trigger mode:
         #10/2018 updated the camserver command for setting trigger mode
@@ -651,11 +679,18 @@ def mmpad_on_new '{
             camserver("padcom settrigger 2 0 0",0.1)
             camserver("padcom mtrigger 1 1",0.1)
         }
+
+        #set flag to save frames in blocks:
+        print "Camserver set to save frames in blocks"
+        camserver("filestore 1 5",0.1)
+        
+        MMPAD["initialized"] = 1
+        print "MMPAD initialized"
+    }
     
-        #print a message saying whether the detector is in alignment mode (overwrites images during spec scans)
-        if(MMPAD["align_flag"] == 1) {
-            print "MMPAD is in alignment mode (will not save unique filenames during spec scans)"
-        }
+    #print a message saying whether the detector is in alignment mode (overwrites images during spec scans)
+    if(MMPAD["align_flag"] == 1) {
+        print "MMPAD is in alignment mode (will not save unique filenames during spec scans)"
     }
 
     # what are these for??
@@ -665,6 +700,7 @@ def mmpad_on_new '{
     print "MMPAD macros have been added to spec ct"
 }'
 
+# Prints all MMPAD state values to console
 def mmpad_status '{
     print MMPAD;
 }'
