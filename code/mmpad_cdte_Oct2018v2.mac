@@ -120,6 +120,12 @@ if (!MMPAD["hv_ok"]) {
 if (!MMPAD["power_ok"]) {
     MMPAD["power_ok"] = 0
 }
+#flag denoting what is being used to trigger mmpad
+# 0 = software trigger
+# 1 = hardware trigger
+if (!MMPAD["hardware_trigger"]) {
+    MMPAD["hardware_trigger"] = 0
+}
 
 #choose alignment vs. data mode
 #alignment mode = take images with each ct, but always overwrite to the same file
@@ -668,23 +674,11 @@ def mmpad_on_new '{
         #}
         #print "background subtraction turned ON"
     
-        mmpad_set_path;         # get path for images:
-        mmpad_exposure_time;    # set exposure time:
+        mmpad_set_path;         # get path for images
+        mmpad_exposure_time;    # set exposure time
         mmpad_detector_setup    # power everything up
 
-        #set trigger mode:
-        #10/2018 updated the camserver command for setting trigger mode
-        MMPAD["hardware_trigger"] = yesno("Enable hardware trigger?", MMPAD["hardware_trigger"]);
-        if(MMPAD["hardware_trigger"]==0) {
-            #software trigger mode:
-            print "setting software trigger mode"
-            camserver("padcom settrigger 4 0 0",0.1)
-        } else {
-            #hardware trigger mode with 1 trigger per sequence and zero delay from trigger to action:
-            print "setting hardware trigger mode"
-            camserver("padcom settrigger 2 0 0",0.1)
-            camserver("padcom mtrigger 1 1",0.1)
-        }
+        _mmpad_set_trigger      # set trigger mode for mmpad
     }
 
     #set flag to save frames in blocks:
