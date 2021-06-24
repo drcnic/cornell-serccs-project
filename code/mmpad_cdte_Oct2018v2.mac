@@ -75,7 +75,8 @@ if (!MMPAD["offset"]) {
     MMPAD["offset"] = 0
 }
 if (!MMPAD["server"]) {
-    MMPAD["server"] = "164.54.106.89:41234"
+    #MMPAD["server"] = "164.54.106.89:41234"
+    MMPAD["server"] = "172.30.11.11:41234"
 }
 if (!MMPAD["roix"]) {
     MMPAD["roix"] = 188
