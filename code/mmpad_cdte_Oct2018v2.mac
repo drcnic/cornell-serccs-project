@@ -561,12 +561,8 @@ def _mmpad_set_path(val) '{
     while(!val) {
         val = getval("Enter MMPAD remote path for images (must exist)", MMPAD["path"]);
     }
-    
-    if(file_info(val, "-d")) { # check and see if supplied directory actually exists
-        MMPAD["path"] = val;        
-    } else {
-        print "ERROR: supplied path isn\'t a directory. Maybe it doesn\'t exist?";
-    }  
+
+    MMPAD["path"] = val;
 }'
 
 # sets the global mmpad path variable in SPEC
@@ -606,7 +602,7 @@ def _mmpad_server_setup(val) '{
             exit;  
         }
 
-        MMPAD["server"] = val   # don't change the global ip variable until we know it works
+        MMPAD["server"] = val   # wait to change the global ip variable until we know it works
         sock_par(MMPAD["server"], "timeout", 25.0);
         
         MMPAD["sock_ok"] = 1;    #the connection has been made
@@ -657,7 +653,7 @@ def mmpad_on_new '{
     
     if ("$1" == "auto") {   # if called with auto flag, set everything up without user intervention
         print "Setting up MMPAD automatically...";
-        _mmpad_server_setup(MMPAD["server"]);   # for some reason, spec doesn't like to use associative
+        _mmpad_server_setup(MMPAD["server"]);   # for some reason, spec does not like to use associative
         _mmpad_set_path(MMPAD["path"]);         #   string arrays as arguments in normal macros
         mmpad_exposure_time MMPAD["exposure_time"]; # but spec is ok with this because exposure_time is associated with a numerical value
         _mmpad_detector_setup;  # power everything up
