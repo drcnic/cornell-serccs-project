@@ -560,7 +560,7 @@ def mmpad_set_path '{
     local val;
     val = 0;
     val = "$1";
-
+    print "$1";
     while(!val) {
         val = getval("Enter MMPAD remote path for images (must exist)", MMPAD["path"]);
     }
@@ -645,16 +645,15 @@ def mmpad_on_new '{
             exit;
         }
     }
-
-    mmpad_detector_setup  # power everything up
     
     if ("$1" == "auto") {   # if called with auto flag, set everything up without user intervention
         print "Setting up MMPAD automatically...";
         mmpad_server_setup MMPAD["server"];
         mmpad_set_path MMPAD["path"];
         mmpad_exposure_time MMPAD["exposure_time"];
+        mmpad_detector_setup;  # power everything up
         mmpad_set_trigger;
-    } else {
+    } else {    # else, do set up as normal with user input
         mmpad_server_setup    # connect SPEC instance to camserver
 
         #turn on automatic background subtraction using the most recent dark file:
@@ -664,9 +663,10 @@ def mmpad_on_new '{
         #}
         #print "background subtraction turned ON"
     
-        mmpad_set_path;         #get path for images:
-        mmpad_exposure_time;    #set exposure time:
-    
+        mmpad_set_path;         # get path for images:
+        mmpad_exposure_time;    # set exposure time:
+        mmpad_detector_setup    # power everything up
+
         #set trigger mode:
         #10/2018 updated the camserver command for setting trigger mode
         MMPAD["hardware_trigger"] = yesno("Enable hardware trigger?", MMPAD["hardware_trigger"]);
@@ -680,14 +680,14 @@ def mmpad_on_new '{
             camserver("padcom settrigger 2 0 0",0.1)
             camserver("padcom mtrigger 1 1",0.1)
         }
-
-        #set flag to save frames in blocks:
-        print "Camserver set to save frames in blocks"
-        camserver("filestore 1 5",0.1)
-        
-        MMPAD["initialized"] = 1
-        print "MMPAD initialized"
     }
+
+    #set flag to save frames in blocks:
+    print "Camserver set to save frames in blocks"
+    camserver("filestore 1 5",0.1)
+            
+    MMPAD["initialized"] = 1
+    print "MMPAD initialized"
     
     #print a message saying whether the detector is in alignment mode (overwrites images during spec scans)
     if(MMPAD["align_flag"] == 1) {
