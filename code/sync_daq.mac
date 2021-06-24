@@ -147,8 +147,13 @@ def _sync_vff_abort '{
 # set_take_n
 # exposure 
 def _sync_vff_scan_head '{
-    _sync_ff_newfile
+    _sync_vff_newfile
 
+    # _ctime = exposure time
+    # additional frame time, set to 0
+    # NPTS = n number of points
+    camserver(sprintf("set_take_n %s 0 %s", _ctime, NPTS), 1);
+    camserver(sprintf("exposure %s/%s/vff/vff", DAQROOT, DAQID), 1);
 }'
 
 # comment command -> logfile

@@ -556,21 +556,26 @@ def _mmpad_getcounts '
 #### NEW CODE ####
 
 
-
-def mmpad_set_path '{
-    local val;
-    val = 0;
-    val = "$1";
-    print "$1";
+# sets the global mmpad path variable in SPEC
+def _mmpad_set_path(val) '{
     while(!val) {
         val = getval("Enter MMPAD remote path for images (must exist)", MMPAD["path"]);
     }
-
-    MMPAD["path"] = val;
+    
+    if(file_info(val, "-d")) { # check and see if supplied directory actually exists
+        MMPAD["path"] = val;        
+    } else {
+        print "ERROR: supplied path isn\'t a directory. Maybe it doesn\'t exist?";
+    }  
 }'
 
-# Turns on MMPAD detector power board and Keithley HV power supply:
-def mmpad_detector_setup '{
+# sets the global mmpad path variable in SPEC
+def mmpad_set_path '{
+    _mmpad_set_path("$1");
+}'
+
+# Turns on MMPAD detector power board and Keithley HV power supply
+def _mmpad_detector_setup '{
     # Turns on mmpad detector power board
     if(MMPAD["power_ok"] == 0) {
         print "executing detector powerup";
@@ -586,24 +591,22 @@ def mmpad_detector_setup '{
     mmpad_hvon; # Turns on and configures Keithley HV power supply
 }'
 
-# Establishes connection to detector computer camserver instance:
-def mmpad_server_setup '{
+# Establishes connection to detector computer camserver instance
+def _mmpad_server_setup(val) '{
     if(MMPAD["sock_ok"] == 0) {
         #get the detector IP address:
-        local val
-        print "$1"
-        val = 0
-        val = "$1"
         while(!val) {
             val = getval("Enter MMPAD server IP", MMPAD["server"]);
         }
-        MMPAD["server"] = val
+        
         
         #establish the network connection to the detector computer:
-        if (!sock_par(MMPAD["server"], "connect")) {    # check if we were successful
+        if (!sock_par(val, "connect")) {    # check if the supplied IP is good, and we were successful
             print "ERROR: Could not connect to camserver. Ensure IP is correct and that camserver is running.";
             exit;  
         }
+
+        MMPAD["server"] = val   # don't change the global ip variable until we know it works
         sock_par(MMPAD["server"], "timeout", 25.0);
         
         MMPAD["sock_ok"] = 1;    #the connection has been made
@@ -618,8 +621,13 @@ def mmpad_server_setup '{
     }
 }'
 
+# Establishes connection to detector computer camserver instance
+def mmpad_server_setup '{
+    _mmpad_server_setup("$1");
+}'
+
 # sets the trigger mode for the mmpad
-def mmpad_set_trigger '{
+def _mmpad_set_trigger '{
     #set trigger mode:
     #10/2018 updated the camserver command for setting trigger mode
     MMPAD["hardware_trigger"] = yesno("Enable hardware trigger?", MMPAD["hardware_trigger"]);
@@ -649,12 +657,12 @@ def mmpad_on_new '{
     
     if ("$1" == "auto") {   # if called with auto flag, set everything up without user intervention
         print "Setting up MMPAD automatically...";
-        mmpad_server_setup printf("%s",MMPAD["server"]);
-        mmpad_set_path MMPAD["path"];
-        mmpad_exposure_time MMPAD["exposure_time"];
-        mmpad_detector_setup;  # power everything up
-        mmpad_set_trigger;
-    } else {    # else, do set up as normal with user input
+        _mmpad_server_setup(MMPAD["server"]);   # for some reason, spec doesn't like to use associative
+        _mmpad_set_path(MMPAD["path"]);         #   string arrays as arguments in normal macros
+        mmpad_exposure_time MMPAD["exposure_time"]; # but spec is ok with this because exposure_time is associated with a numerical value
+        _mmpad_detector_setup;  # power everything up
+        _mmpad_set_trigger;
+    } else {    # otherwise, do set up as normal with user input
         mmpad_server_setup    # connect SPEC instance to camserver
 
         #turn on automatic background subtraction using the most recent dark file:
