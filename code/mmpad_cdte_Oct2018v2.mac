@@ -590,7 +590,7 @@ def mmpad_server_setup '{
     if(MMPAD["sock_ok"] == 0) {
         #get the detector IP address:
         local val
-
+        print "$1"
         val = 0
         val = "$1"
         while(!val) {
@@ -649,6 +649,7 @@ def mmpad_on_new '{
     mmpad_detector_setup  # power everything up
     
     if ("$1" == "auto") {   # if called with auto flag, set everything up without user intervention
+        print "Setting up MMPAD automatically...";
         mmpad_server_setup MMPAD["server"];
         mmpad_set_path MMPAD["path"];
         mmpad_exposure_time MMPAD["exposure_time"];
