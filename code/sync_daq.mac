@@ -196,6 +196,8 @@ def sync_vff_on '{
     #MMPAD["path"] = sprint("%s/%s/vff/vff", DAQROOT, DAQID);
     mmpad_on_new auto;  # Configure and start mmpad with last used settings
 
+    mmpad_resethv;
+
     printf("Taking dark frames...\n");
     MMPAD["exposure_time"] = 0.0001;    # 100 microsec exposure time for darkimages
     mmpad_dark "darkfile" 20;   # take darkframes and turn on background subtract

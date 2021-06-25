@@ -630,11 +630,11 @@ def mmpad_server_setup '{
 }'
 
 # sets the trigger mode for the mmpad
-def _mmpad_set_trigger '{
+def _mmpad_set_trigger() '{
     #set trigger mode:
     #10/2018 updated the camserver command for setting trigger mode
     MMPAD["hardware_trigger"] = yesno("Enable hardware trigger?", MMPAD["hardware_trigger"]);
-    
+
     if(MMPAD["hardware_trigger"]==0) {
         #software trigger mode:
         print "setting software trigger mode"
@@ -645,6 +645,10 @@ def _mmpad_set_trigger '{
         camserver("padcom settrigger 2 0 0",0.1)
         camserver("padcom mtrigger 1 1",0.1)
     }
+}'
+
+def mmpad_set_trigger '{
+    _mmpad_set_trigger("$1");
 }'
 
 # NEEDS TESTING
@@ -664,7 +668,7 @@ def mmpad_on_new '{
         _mmpad_set_path(MMPAD["path"]);         #   string arrays as arguments in normal macros
         mmpad_exposure_time MMPAD["exposure_time"]; # but spec is ok with this because exposure_time is associated with a numerical value
         _mmpad_detector_setup;  # power everything up
-        _mmpad_set_trigger;
+        mmpad_set_trigger;
     } else {    # otherwise, do set up as normal with user input
         mmpad_server_setup    # connect SPEC instance to camserver
 
@@ -694,7 +698,6 @@ def mmpad_on_new '{
         print "MMPAD is in alignment mode (will not save unique filenames during spec scans)"
     }
 
-    # what are these for??
     cdef("user_precount", "_mmpad_precount();", "_mmpad_mac_")
     cdef("user_postcount", "_mmpad_postcount();", "_mmpad_mac_")
     cdef("user_getcounts", "_mmpad_getcounts;" , "_mmpad_mac_")
