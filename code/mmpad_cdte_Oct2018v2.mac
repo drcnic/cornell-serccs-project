@@ -630,7 +630,7 @@ def mmpad_server_setup '{
 }'
 
 # sets the trigger mode for the mmpad
-def _mmpad_set_trigger() '{
+def _mmpad_set_trigger '{
     #set trigger mode:
     #10/2018 updated the camserver command for setting trigger mode
     MMPAD["hardware_trigger"] = yesno("Enable hardware trigger?", MMPAD["hardware_trigger"]);
@@ -647,9 +647,9 @@ def _mmpad_set_trigger() '{
     }
 }'
 
-def mmpad_set_trigger '{
-    _mmpad_set_trigger("$1");
-}'
+#def mmpad_set_trigger '{
+#    _mmpad_set_trigger("$1");
+#}'
 
 # NEEDS TESTING
 def mmpad_on_new '{
@@ -668,7 +668,7 @@ def mmpad_on_new '{
         _mmpad_set_path(MMPAD["path"]);         #   string arrays as arguments in normal macros
         mmpad_exposure_time MMPAD["exposure_time"]; # but spec is ok with this because exposure_time is associated with a numerical value
         _mmpad_detector_setup;  # power everything up
-        mmpad_set_trigger;
+        _mmpad_set_trigger;
     } else {    # otherwise, do set up as normal with user input
         mmpad_server_setup    # connect SPEC instance to camserver
 
