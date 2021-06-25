@@ -154,6 +154,8 @@ def _sync_vff_scan_head '{
     # NPTS = n number of points
     camserver(sprintf("set_take_n %s 0 %s", _ctime, NPTS), 1);
     camserver(sprintf("exposure %s/%s/vff/vff", DAQROOT, DAQID), 1);
+
+    # might need junk images to allow rams to get to speed
 }'
 
 # comment command -> logfile
@@ -190,11 +192,13 @@ def sync_vff_on '{
 
     #printf("\nConfiguring vff (MMPAD) trigger mode...")
     printf("Turning on MMPAD...\n");
-    mmpad_on_new;
-
+    MMPAD["hardware_trigger"] = 1;      # mmpad_on will now set mmpad to hardware trigger 
+    #MMPAD["path"] = sprint("%s/%s/vff/vff", DAQROOT, DAQID);
+    mmpad_on_new auto;  # Configure and start mmpad with last used settings
 
     printf("Taking dark frames...\n");
-    mmpad_dark;
+    MMPAD["exposure_time"] = 0.0001;    # 100 microsec exposure time for darkimages
+    mmpad_dark "darkfile" 20;   # take darkframes and turn on background subtract
 
     sleep(5)
     printf("\nConfiguring vff new file...")

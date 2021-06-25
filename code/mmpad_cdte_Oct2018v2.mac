@@ -569,6 +569,7 @@ def _mmpad_set_path(val) '{
     }
 
     MMPAD["path"] = val;
+    #TODO: add a check here by somehow asking camserver if the directory exists
 }'
 
 # sets the global mmpad path variable in SPEC
