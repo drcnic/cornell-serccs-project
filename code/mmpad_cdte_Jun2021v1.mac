@@ -634,7 +634,7 @@ def _mmpad_set_trigger '{
     #set trigger mode:
     #10/2018 updated the camserver command for setting trigger mode
     MMPAD["hardware_trigger"] = yesno("Enable hardware trigger?", MMPAD["hardware_trigger"]);
-
+    
     if(MMPAD["hardware_trigger"]==0) {
         #software trigger mode:
         print "setting software trigger mode"
@@ -652,7 +652,7 @@ def _mmpad_set_trigger '{
 #}'
 
 # NEEDS TESTING
-def mmpad_on_new '{
+def _mmpad_on_new(var) '{
     #initialized = socket open, detector power on, Keithley on.
     if (MMPAD["initialized"]) {
         if(yesno("MMPAD already initialized. Re-initialize?")) {
@@ -662,7 +662,7 @@ def mmpad_on_new '{
         }
     }
     
-    if ("$1" == "auto") {   # if called with auto flag, set everything up without user intervention
+    if (var == "auto") {   # if called with auto flag, set everything up without user intervention
         print "Setting up MMPAD automatically...";
         _mmpad_server_setup(MMPAD["server"]);   # for some reason, spec does not like to use associative
         _mmpad_set_path(MMPAD["path"]);         #   string arrays as arguments in normal macros
@@ -681,7 +681,7 @@ def mmpad_on_new '{
     
         mmpad_set_path;         # get path for images
         mmpad_exposure_time;    # set exposure time
-        mmpad_detector_setup    # power everything up
+        _mmpad_detector_setup    # power everything up
 
         _mmpad_set_trigger      # set trigger mode for mmpad
     }
@@ -702,6 +702,10 @@ def mmpad_on_new '{
     cdef("user_postcount", "_mmpad_postcount();", "_mmpad_mac_")
     cdef("user_getcounts", "_mmpad_getcounts;" , "_mmpad_mac_")
     print "MMPAD macros have been added to spec ct"
+}'
+
+def mmpad_on_new '{
+    _mmpad_on_new("$1");
 }'
 
 # Prints all MMPAD state values to console

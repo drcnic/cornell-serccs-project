@@ -186,15 +186,15 @@ def _sync_vff_scan_tail '{
 # 
 # does mmpad_on need to be done before dark images?
 def sync_vff_on '{
-    printf("\n***Remember to use appropriate attenuation***")
-    printf("\nSetting directories for vff...")
+    printf("\n***Remember to use appropriate attenuation***\n")
+    printf("\nSetting directories for vff...\n")
    _sync_ff_newfile   
 
     #printf("\nConfiguring vff (MMPAD) trigger mode...")
     printf("Turning on MMPAD...\n");
     MMPAD["hardware_trigger"] = 1;      # mmpad_on will now set mmpad to hardware trigger 
     #MMPAD["path"] = sprint("%s/%s/vff/vff", DAQROOT, DAQID);
-    mmpad_on_new auto;  # Configure and start mmpad with last used settings
+    _mmpad_on_new("auto");  # Configure and start mmpad with last used settings
 
     mmpad_resethv;
 
