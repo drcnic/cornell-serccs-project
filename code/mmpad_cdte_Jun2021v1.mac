@@ -634,7 +634,7 @@ def _mmpad_set_trigger '{
     #set trigger mode:
     #10/2018 updated the camserver command for setting trigger mode
     MMPAD["hardware_trigger"] = yesno("Enable hardware trigger?", MMPAD["hardware_trigger"]);
-    
+
     if(MMPAD["hardware_trigger"]==0) {
         #software trigger mode:
         print "setting software trigger mode"
@@ -654,12 +654,17 @@ def _mmpad_set_trigger '{
 # NEEDS TESTING
 def _mmpad_on_new(var) '{
     #initialized = socket open, detector power on, Keithley on.
-    if (MMPAD["initialized"]) {
-        if(yesno("MMPAD already initialized. Re-initialize?")) {
-            break;
-        } else {
-            exit;
-        }
+    if (!MMPAD["initialized"]) {
+        #if(yesno("MMPAD already initialized. Re-initialize?")); {
+        #    break;
+        #} else {
+        #    exit;
+        #}
+
+        print "MMPAD not on. Initializing...";
+    } else {
+        print "MMPAD already on.";
+        return;
     }
     
     if (var == "auto") {   # if called with auto flag, set everything up without user intervention

@@ -1,21 +1,23 @@
-NFY_POS = 4 #12 #6.75
-NFY_FURN_POS = 25.0
+"""
+In the near-field section, added global variables JUNKSTART and GOODSTART.
+JUNKSTART is the image number of the first junk image.
+GOODSTART is the image number of the first good image.
+These global variables are used in _sync_nf_scan_head.
+-PK 2021-02-24
+"""
 
-NFX_OUT = 20.0
+NFY_POS = -1.0 #nfy redefined on 6/16/2021 - was 4.5
+NFY_FURN_POS = 8 #changed to 8 on 5/12/2021 - was 15
+
+NFX_OUT = 28.0 #20.0 pushed out from 20 on 4/30
 
 #using rams4 near-field setup, choose 5.2 mm as nfx in default position 9/26/2020:
-# updated to 4.59 after realignment of shutter x.
-#updated to 4.265 on 9/30/2020:
-#and to 4.290 on 10/1/2020:
-#and again to 0.955 on 10/7/2020...
-#and again to 0.855 on 10/12/2020...
-#and again to 1.525 on 10/14/2020...
-#and again to 1.370 on 10/16/2020...
-#and again to 0.870 on 11/11/2020
-NFX_IN_DEF = 0.840
+# updated frequently....
+NFX_IN_DEF = 2.635
 
 NFX_FURN_OUT = 20.0
 NFY_FURN_OUT = 25.0
+
 
 NFY_LOW = NFY_POS-0.1
 
@@ -25,7 +27,7 @@ NFY_HIGH = 40.1
 NFY_FURN_LOW = NFY_FURN_POS-0.1
 NFY_FURN_HIGH = NFY_HIGH
 
-LOW_CUR=80
+LOW_CUR=80 
 
 #default attenuation in mm of steel for nf data
 NF_ATT_DEF=0 
@@ -121,11 +123,12 @@ def sync_log_off '{
 global SYNC_VFF_MODE
 
 def _sync_vff_newfile '{
-    printf("Creating vff directory...");
-    
     _1 = sprintf("%s/%s/vff", DAQROOT, DAQID)
     if (!file_info(_1, "-d")){
         unix(sprintf("mkdir -p %s", _1))
+        printf("Directory created at: %s\n", _1);
+    } else {
+        printf("Directory already exists at: %s\n", _1);
     }
 }'
 
@@ -152,8 +155,9 @@ def _sync_vff_scan_head '{
     # _ctime = exposure time
     # additional frame time, set to 0
     # NPTS = n number of points
-    camserver(sprintf("set_take_n %s 0 %s", _ctime, NPTS), 1);
-    camserver(sprintf("exposure %s/%s/vff/vff", DAQROOT, DAQID), 1);
+    camserver(sprintf("set_take_n %s 0 %s", _ctime, NPTS+5), 1);    # NPTS+5: something about junk frames
+    #camserver(sprintf("exposure %s/%s/vff/vff", DAQROOT, DAQID), 1);
+    camserver(sprintf("exposure /home/padme/data/daric/vff_test"), 1);
 
     # might need junk images to allow rams to get to speed
 }'
@@ -161,7 +165,7 @@ def _sync_vff_scan_head '{
 # comment command -> logfile
 #   where last image was saved
 def _sync_vff_scan_tail '{
-    comment "MMPAD saved last image to %s" "sprintf("%s/%s/vff",DAQROOT,DAQID)";
+    comment "MMPAD saved last image to %s" "sprintf(\"%s/%s/vff\",DAQROOT,DAQID)";
 }'
 
 # take dark images in here
@@ -188,29 +192,32 @@ def _sync_vff_scan_tail '{
 def sync_vff_on '{
     printf("\n***Remember to use appropriate attenuation***\n")
     printf("\nSetting directories for vff...\n")
-   _sync_ff_newfile   
+   _sync_vff_newfile   
 
     #printf("\nConfiguring vff (MMPAD) trigger mode...")
-    printf("Turning on MMPAD...\n");
+    printf("\nTurning on MMPAD...\n");
     MMPAD["hardware_trigger"] = 1;      # mmpad_on will now set mmpad to hardware trigger 
     #MMPAD["path"] = sprint("%s/%s/vff/vff", DAQROOT, DAQID);
     _mmpad_on_new("auto");  # Configure and start mmpad with last used settings
 
-    mmpad_resethv;
+    ###mmpad_resethv;
 
-    printf("Taking dark frames...\n");
+    printf("\nClosing garage door and taking dark frames...");
     MMPAD["exposure_time"] = 0.0001;    # 100 microsec exposure time for darkimages
+    closes;             # Closes fast shutter (blocks xrays from sample, last door in the hutch)
+    close_garage_door;  # Close garage door
+                        # This is additional protection against high energy harmonics
     mmpad_dark "darkfile" 20;   # take darkframes and turn on background subtract
-
+    printf("\nOpening garage door...")
+    open_garage_door
+    
     sleep(5)
-    printf("\nConfiguring vff new file...")
+    printf("\nConfiguring vff new file...\n")
     cdef("user_newfile", "_sync_vff_newfile;", "_sync_vff_")
-    printf("\nConfiguring vff scan parameters...")
+    printf("\nConfiguring vff scan parameters...\n")
     cdef("sync_user_scan_head", "_sync_vff_scan_head;", "_sync_vff_")
     cdef("sync_user_scan_tail", "_sync_vff_scan_tail;", "_sync_vff_")
     cdef("sync_user_abort", "_sync_vff_abort;", "_sync_vff_")
-    
-    closes  # closes fast shutter (blocks xrays from sample, last door in the hutch) 
     
     # assume the ff camera will stay in place
     if (NF_EXISTS == 1) {                
@@ -231,7 +238,7 @@ def sync_vff_on '{
 	    #umv nfxm 35 #mobile set-up
         }
     } else  {
-        printf("\nNo need to move nf setup as it dose not exist.")
+        printf("\nNo need to move nf setup as it does not exist.")
     } 
     
     
@@ -246,8 +253,7 @@ def sync_vff_on '{
     #set_ic_gain ic2 10
     #set_ic_gain ic3 10
     _sr570_log  # logs info about ion chambers
-    printf("\nOpening garage door...")
-    open_garage_door
+
 
     printf("\nPlacing Default FF Attenuation...")
     atten FF_ATT_DEF    # sets atten to high value for equipment safety
@@ -513,7 +519,7 @@ def sync_ff_off '{
 ######################
 
 global SYNC_NF_MODE, NF_EXISTS, SYNC_NF_DETECTOR
-
+global JUNKSTART, GOODSTART
 
 def nf_det '{
     _nf_det("$1")
@@ -590,18 +596,24 @@ def _sync_nf_abort '{
 def _sync_nf_scan_head '{
     _sync_nf_newfile
     
-    if (SYNC_NF_DETECTOR == "retiga") {   
+    if (SYNC_NF_DETECTOR == "retiga") {
+        JUNKSTART = epics_get("QIMAGE1:TIFF1:FileNumber")
+        GOODSTART = epics_get("QIMAGE1:TIFF1:FileNumber")+5
         comment "NF saving five junk images starting with %s/%s_%6.6d.tif" "epics_get(\"QIMAGE1:TIFF1:FilePath\", \"string\"), epics_get(\"QIMAGE1:TIFF1:FileName_RBV\", \"string\"), epics_get(\"QIMAGE1:TIFF1:FileNumber\")"
         comment "NF saving good images starting with %s/%s_%6.6d.tif" "epics_get(\"QIMAGE1:TIFF1:FilePath\", \"string\"), epics_get(\"QIMAGE1:TIFF1:FileName_RBV\", \"string\"), epics_get(\"QIMAGE1:TIFF1:FileNumber\")+5"
         epics_put("QIMAGE1:cam1:ImageMode", 0) #Single
         epics_put("QIMAGE1:cam1:TriggerMode", 7) #StrobeLow    
         epics_put("QIMAGE1:cam1:NumImages", 1)
         epics_put("QIMAGE1:TIFF1:EnableCallbacks", 1)
+
+        epics_put("QIMAGE1:TIFF1:FileWriteMode", 0) #Single
+
         #while (epics_get("QIMAGE1:cam1:TIFF1:EnableCallbacks_RBV") != "Enable") {
         #    sleep(0.05)
         #}
         epics_put("QIMAGE1:cam1:AcquireTime", _ctime)
         epics_put("QIMAGE1:cam1:AcquirePeriod", _ctime)
+#        epics_put("QIMAGE1:cam1:AcquirePeriod", 1)
         epics_put("QIMAGE1:cam1:qInitialize", 1)
         p "Turning off hutch light..."
         hutch_light_off
@@ -612,6 +624,8 @@ def _sync_nf_scan_head '{
         }
 
     } else if (SYNC_NF_DETECTOR == "manta") {
+        JUNKSTART = epics_get("Manta1:TIFF1:FileNumber")
+        GOODSTART = epics_get("Manta1:TIFF1:FileNumber")+5
         if (RAMS_EXISTS == 1) {
             comment "NF saving five junk images starting with %s/%s_%6.6d.tif" "epics_get(\"Manta1:TIFF1:FilePath\", \"string\"), epics_get(\"Manta1:TIFF1:FileName_RBV\", \"string\"), epics_get(\"Manta1:TIFF1:FileNumber\")"
             comment "NF saving good images starting with %s/%s_%6.6d.tif" "epics_get(\"Manta1:TIFF1:FilePath\", \"string\"), epics_get(\"Manta1:TIFF1:FileName_RBV\", \"string\"), epics_get(\"Manta1:TIFF1:FileNumber\")+5"
@@ -627,6 +641,7 @@ def _sync_nf_scan_head '{
         epics_put("Manta1:cam1:NumImages", NPTS+10) #10 images buffer added by DCP 1/21/21        
         epics_put("Manta1:cam1:AcquireTime", _ctime)
         epics_put("Manta1:cam1:AcquirePeriod", _ctime)
+#        epics_put("Manta1:cam1:AcquirePeriod", 1)
         epics_put("Manta1:TIFF1:EnableCallbacks", 1)
         p "Turning off hutch light..."
         hutch_light_off
