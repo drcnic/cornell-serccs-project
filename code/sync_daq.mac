@@ -123,7 +123,7 @@ def sync_log_off '{
 global SYNC_VFF_MODE
 
 def _sync_vff_newfile '{
-    _1 = sprintf("%s/%s/vff", DAQROOT, DAQID)
+    _1 = sprintf("%s/%s/vff", "/home/padme/data/currentdaq", DAQID)
     if (!file_info(_1, "-d")){
         unix(sprintf("mkdir -p %s", _1))
         printf("Directory created at: %s\n", _1);
@@ -165,7 +165,7 @@ def _sync_vff_scan_head '{
 # comment command -> logfile
 #   where last image was saved
 def _sync_vff_scan_tail '{
-    comment "MMPAD saved last image to %s" "sprintf(\"%s/%s/vff\",DAQROOT,DAQID)";
+    comment "MMPAD saved last image to %s" "sprintf(\"%s/%s/vff\",\"/home/padme/data/currentdaq\",DAQID)";
 }'
 
 # take dark images in here
@@ -197,7 +197,7 @@ def sync_vff_on '{
     #printf("\nConfiguring vff (MMPAD) trigger mode...")
     printf("\nTurning on MMPAD...\n");
     MMPAD["hardware_trigger"] = 1;      # mmpad_on will now set mmpad to hardware trigger 
-    #MMPAD["path"] = sprint("%s/%s/vff/vff", DAQROOT, DAQID);
+    MMPAD["path"] = sprint("%s/%s/vff/vff", "/home/padme/data/currentdaq", DAQID);
     _mmpad_on_new("auto");  # Configure and start mmpad with last used settings
 
     ###mmpad_resethv;
@@ -1298,9 +1298,14 @@ def sync_with_local_enable() '{
 
 
 def which_mode '{
-    if ((SYNC_FF_MODE == 1) && (SYNC_NF_MODE == 1)) {
-        p "Both modes on. Turn off one of them"
+    if ((SYNC_FF_MODE == 1 || SYNC_VFF_MODE == 1) && (SYNC_NF_MODE == 1)) {
+        p "FF or VFF and NF modes on. Turn off one of them"
     }
+
+    if (SYNC_VFF_MODE == 1) {
+        p "VFF mode"
+    }
+
     if (SYNC_FF_MODE == 1) {
         p "FF mode"
     } else if (SYNC_NF_MODE == 1) {
@@ -1308,5 +1313,4 @@ def which_mode '{
     } else {
         p "No mode"
     }   
-
 }'
