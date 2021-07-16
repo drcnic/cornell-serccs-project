@@ -127,6 +127,13 @@ if (!MMPAD["hardware_trigger"]) {
     MMPAD["hardware_trigger"] = 0
 }
 
+#flag that denotes whether camserver is set to save exposures at remote location or locally
+# 0 = camserver will write files to remote location
+# 1 = camserver will write files locally
+if (!MMPAD["save_local"]) {
+    MMPAD["save_local"] = 0;
+}
+
 #choose alignment vs. data mode
 #alignment mode = take images with each ct, but always overwrite to the same file
 #data mode = save frames as usual
@@ -564,8 +571,12 @@ def _mmpad_getcounts '
 
 # sets the global mmpad path variable in SPEC
 def _mmpad_set_path(val) '{
-    while(!val) {
+    while(!val || !file_info(val, "-d")) {
         val = getval("Enter MMPAD remote path for images (must exist)", MMPAD["path"]);
+        
+        if (!file_info(val, "-d")) {
+            print "Directory does not exist";
+        }
     }
 
     MMPAD["path"] = val;
