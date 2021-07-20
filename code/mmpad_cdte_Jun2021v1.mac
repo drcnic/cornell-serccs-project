@@ -355,6 +355,7 @@ def mmpad_dark '{
         darkframes = getval("Number of dark frames", 0);
     }
 
+    darkfile = sprintf("%s-%s", darkfile, date("%b-%d-%H_%M%p"))
     #closes
 
     MMPAD["dark_file"] = sprintf("%s/%s", MMPAD["path"], darkfile)
@@ -571,12 +572,12 @@ def _mmpad_getcounts '
 
 # sets the global mmpad path variable in SPEC
 def _mmpad_set_path(val) '{
-    while(!val || !file_info(val, "-d")) {
+    while(!val) {
         val = getval("Enter MMPAD remote path for images (must exist)", MMPAD["path"]);
         
-        if (!file_info(val, "-d")) {
-            print "Directory does not exist";
-        }
+        #if (!file_info(val, "-d")) {
+        #    print "Directory does not exist";
+        #}
     }
 
     MMPAD["path"] = val;
@@ -585,11 +586,16 @@ def _mmpad_set_path(val) '{
 
 # sets the global mmpad path variable in SPEC
 def mmpad_set_path '{
+    if ($# > 1) {
+        printf("Usage: mmpad_set_path [PATH]\n"); 
+        exit;
+    }
+
     _mmpad_set_path("$1");
 }'
 
 # Turns on MMPAD detector power board and Keithley HV power supply
-def _mmpad_detector_setup '{
+def _mmpad_detector_setup() '{
     # Turns on mmpad detector power board
     if(MMPAD["power_ok"] == 0) {
         print "executing detector powerup";
@@ -603,6 +609,10 @@ def _mmpad_detector_setup '{
     }
 
     mmpad_hvon; # Turns on and configures Keithley HV power supply
+}'
+
+def mmpad_detector_setup '{
+    _mmpad_detector_setup();
 }'
 
 # Establishes connection to detector computer camserver instance
@@ -637,14 +647,25 @@ def _mmpad_server_setup(val) '{
 
 # Establishes connection to detector computer camserver instance
 def mmpad_server_setup '{
+    if ($# > 1) {
+        printf("Usage: mmpad_server_setup [IP ADDRESS:PORT]\n");
+        exit;
+    }
+
     _mmpad_server_setup("$1");
 }'
 
 # sets the trigger mode for the mmpad
-def _mmpad_set_trigger '{
+def _mmpad_set_trigger(var) '{
     #set trigger mode:
     #10/2018 updated the camserver command for setting trigger mode
-    MMPAD["hardware_trigger"] = yesno("Enable hardware trigger?", MMPAD["hardware_trigger"]);
+    if (var == "software") {
+        MMPAD["hardware_trigger"] = 0;
+    } else if (var == "hardware") {
+        MMPAD["hardware_trigger"] = 1;
+    } else {
+        MMPAD["hardware_trigger"] = yesno("Enable hardware trigger?", MMPAD["hardware_trigger"]);
+    }
 
     if(MMPAD["hardware_trigger"]==0) {
         #software trigger mode:
@@ -658,9 +679,14 @@ def _mmpad_set_trigger '{
     }
 }'
 
-#def mmpad_set_trigger '{
-#    _mmpad_set_trigger("$1");
-#}'
+def mmpad_set_trigger '{
+    if ($# > 1) {
+        printf("Usage: mmpad_set_trigger [software|hardware]\n");
+        exit;
+    }
+    
+    _mmpad_set_trigger("$1");
+}'
 
 # NEEDS TESTING
 def _mmpad_on_new(var) '{
@@ -683,8 +709,9 @@ def _mmpad_on_new(var) '{
         _mmpad_server_setup(MMPAD["server"]);   # for some reason, spec does not like to use associative
         _mmpad_set_path(MMPAD["path"]);         #   string arrays as arguments in normal macros
         mmpad_exposure_time MMPAD["exposure_time"]; # but spec is ok with this because exposure_time is associated with a numerical value
-        _mmpad_detector_setup;  # power everything up
-        _mmpad_set_trigger;
+        mmpad_detector_setup;  # power everything up
+        _mmpad_set_trigger("hardware");
+
     } else {    # otherwise, do set up as normal with user input
         mmpad_server_setup    # connect SPEC instance to camserver
 
@@ -697,9 +724,9 @@ def _mmpad_on_new(var) '{
     
         mmpad_set_path;         # get path for images
         mmpad_exposure_time;    # set exposure time
-        _mmpad_detector_setup    # power everything up
+        mmpad_detector_setup;    # power everything up
 
-        _mmpad_set_trigger      # set trigger mode for mmpad
+        mmpad_set_trigger;      # set trigger mode for mmpad
     }
 
     #set flag to save frames in blocks:
@@ -721,6 +748,11 @@ def _mmpad_on_new(var) '{
 }'
 
 def mmpad_on_new '{
+    if ($# > 1) {
+        printf("Usage: mmpad_on [auto]\n");
+        exit;
+    }
+    
     _mmpad_on_new("$1");
 }'
 

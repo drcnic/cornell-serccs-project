@@ -130,15 +130,6 @@ def _sync_vff_newfile '{
     } else {
         printf("Directory already exists at: %s\n", _1);
     }
-        
-    local dir;
-    if (!MMPAD["save_local"]) {
-        dir = sprintf("%s/%s/vff", "/home/padme/data/currentdaq", DAQID);
-    } else {
-        dir = sprintf("/home/padme/data/daric/vff_test");
-    }
-    
-    _mmpad_set_path(dir);
 }'
 
 
@@ -159,28 +150,22 @@ def _sync_vff_abort '{
 # set_take_n
 # exposure 
 def _sync_vff_scan_head '{
-    _sync_vff_newfile;
-
+    _sync_vff_newfile
 
     # _ctime = exposure time
     # additional frame time, set to 0
     # NPTS = n number of points
     camserver(sprintf("set_take_n %s 0 %s", _ctime, NPTS+5), 1);    # NPTS+5: something about junk frames
-    camserver(sprintf("exposure %s/vff", MMPAD["path"]), 1);
-    #camserver();
-    
+    #camserver(sprintf("exposure %s/%s/vff/vff", DAQROOT, DAQID), 1);
+    camserver(sprintf("exposure /home/padme/data/daric/vff_test"), 1);
+
     # might need junk images to allow rams to get to speed
 }'
 
 # comment command -> logfile
 #   where last image was saved
 def _sync_vff_scan_tail '{
-    if (file_info(sprintf("%s/%s/vff/vff", DAQROOT,DAQID), "-f")) {
-        comment "MMPAD saved last image to %s" "sprintf(\"%s/%s/vff\", DAQROOT,DAQID)";
-    } else {
-        printf("\n***ERROR***\tFailed to write VFF file to disk. Images not saved.\n");
-        printf("You will need to ");
-    }
+    comment "MMPAD saved last image to %s" "sprintf(\"%s/%s/vff\",DAQROOT,DAQID)";
 }'
 
 # take dark images in here
@@ -212,7 +197,7 @@ def sync_vff_on '{
     #printf("\nConfiguring vff (MMPAD) trigger mode...")
     printf("\nTurning on MMPAD...\n");
     MMPAD["hardware_trigger"] = 1;      # mmpad_on will now set mmpad to hardware trigger 
-    MMPAD["path"] = sprintf("%s/%s/vff", "/home/padme/data/currentdaq", DAQID);
+    #MMPAD["path"] = sprint("%s/%s/vff/vff", DAQROOT, DAQID);
     _mmpad_on_new("auto");  # Configure and start mmpad with last used settings
 
     ###mmpad_resethv;
@@ -1313,23 +1298,15 @@ def sync_with_local_enable() '{
 
 
 def which_mode '{
-    if (SYNC_NF_MODE == 1) {
-        if (SYNC_FF_MODE == 1 || SYNC_VFF_MODE == 1) {
-            p "FF or VFF and NF modes on. Turn off one of them"
-        } else {
-            p "NF mode"
-        }
+    if ((SYNC_FF_MODE == 1) && (SYNC_NF_MODE == 1)) {
+        p "Both modes on. Turn off one of them"
     }
-
-    if (SYNC_VFF_MODE == 1) {
-        p "VFF mode"
-    }
-
     if (SYNC_FF_MODE == 1) {
         p "FF mode"
-    }
-
-    if (!SYNC_FF_MODE && !SYNC_VFF_MODE && !SYNC_NF_MODE) {
+    } else if (SYNC_NF_MODE == 1) {
+        p "NF mode"
+    } else {
         p "No mode"
-    }
+    }   
+
 }'

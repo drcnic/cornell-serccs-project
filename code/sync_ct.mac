@@ -1,0 +1,198 @@
+### _slew_set now in slew_set.mac
+
+def sync_ct_head '{
+    waitall; get_angles; calcHKL
+    NPTS = T_AV = MT_AV = 0
+    DATE = date()
+    TIME = TIME_END = time()
+    if (DATAFILE != "") {
+        local i,j,z,s
+        ond; offt
+        printf("\n#S %d  %s\n#D %s\n",++SCAN_N,HEADING,DATE)
+        
+        if (_ctime < 0)
+            printf("#M %g  (%s)\n", -_ctime, cnt_name(MON))
+        else
+            printf("#T %g  (%s)\n", _ctime, cnt_name(sec))
+
+        _head_par G 0
+        _head_par U 1
+        _head_par UB 3
+        _head_par Q 4
+
+        printf("#Q %s\n", _hkl_val)
+
+        for (i=0; i<MOTORS; i+= 8) {
+            s = sprintf("#P%d ",i/8)
+            for (j=i; j<i+8 && j<MOTORS;) {
+                if (motor_name(mA[j]) != "unused")
+                    s = s sprintf("%.8g", A[mA[j]])
+                if (j%8 == 7)
+                    break
+                s = s " "
+                j++
+            }
+            print s
+        }
+        Fheader
+        user_Fheader
+        z = _ctime < 0? sec:MON
+        for (i=j=0;i<COUNTERS;i++)
+            if (i != z && i != DET && is_using_counter(i))
+                j++
+        printf("#N 1\n")
+        _cols = 1
+        printf("#L ome\n")
+        offd; ont
+    } else {
+        SCAN_N++
+    }
+    printf("\nScan %3d  %s  %s\n\n", SCAN_N, DATE, HEADING)
+
+    user_postscan_head
+}'
+
+
+
+
+
+
+def sync_ct '{
+   if (($#<2) || ($#>3)) {
+       eprint "Usage: sync_ct points time [brightfield|darkfield]"
+       exit 
+    }
+    if (($3 != 0) && ("$3" != "brightfield") && ("$3" != "darkfield")) {
+        eprint "if argument 3 is specified, it must be brightfield or darkfield"
+        exit        
+    }
+    
+    HEADING = sprintf("sync_ct %d %g", $1, $2)
+     if ("$3" != 0) {
+        HEADING = sprintf("%s %s", HEADING, "$3")
+    }
+    
+    X_L = "Time (s)"
+    Y_L = cnt_name(DET)
+    #opens
+    #tcount(1)
+    #sleep(2)
+    #getcounts
+    #closes
+
+    if ((SYNC_FF_MODE == 1) && (SYNC_FF_DETECTOR == "ge")) {
+        _sync_ct_ge($1, $2, "$3")
+    } else {
+        get_angles
+        _slew_set($2, $1+1) #+1 kludgey fix dcp to get pulse train right  
+        #slew_scan_head
+        sync_ct_head
+        NPTS = $1
+        _sync_ct($1, $2, "$3")
+        set_daqdir_no_scan
+        comment "sync_ct completed"
+    }
+}'
+
+ 
+def _sync_ct(_npts, _ctime, _type) '{
+    local open_garage_flag
+    
+    cdef("cleanup_once", "sync_ct_abort;", "_sync_ct_cleanup_")
+    
+    if (_type != "darkfield") {
+        #sync_with_cesr_current()
+        #sync_with_run_clock((_npts+4)*_ctime)
+        #beamstop_open_check
+    }  
+    
+    
+    sync_user_scan_head
+    
+    # deal with shutters and garage doors, as appropriate
+    if (_type == "darkfield") {
+        if (GARAGE_DOOR_OPEN) {
+            open_garage_flag = 1
+            close_garage_door
+        }
+        closes
+    } else {
+        opens
+    }
+    aux_trigger_on
+    
+    if ((SYNC_FF_MODE == 1) && (SYNC_FF_DETECTOR == "ge")) {
+        sleep((_npts+4)*_ctime)          
+    } else {
+        sleep(_npts*_ctime)        
+    }
+    
+    aux_trigger_off    
+    sleep(_ctime)
+    closes
+    sync_user_scan_tail
+    if (open_garage_flag) {
+        open_garage_door
+    }
+
+}'
+
+
+def _sync_ct_ge(_npts, _ctime, _type) '{
+    local k, divs, step
+    
+    if (_ctime <= 0.15) {
+        eprint "Integration time <= 0.15"
+        exit
+    }    
+    
+    if (_ctime >= 16.1) {
+        eprint "Integration time >= 16"
+        exit
+    } 
+
+    # determine how to divide up the scan into subscans
+    divs = 0
+    while (_npts/++divs > 240) {
+        continue
+    }
+    _npts = _npts/divs
+    
+    if (int(_npts) != _npts) {
+        eprint "Trouble dividing scan into <=240-point subscans"
+        eprint sprintf("Attempted to divide into %d subscans", divs)
+        eprint sprintf("%g points not evenly divisible by %d", _npts, divs)
+        exit
+    }
+    
+    # accommodate 4 scrub frames
+    _slew_set(_ctime, _npts+4)
+
+    get_angles
+    #slew_scan_head
+    sync_ct_head
+    NPTS = _npts
+    for (j=0; j<divs; j++) {
+        comment "sync_ct %g %g" "_npts, _ctime"
+        _sync_ct(_npts, _ctime, _type)       
+        
+    }    
+    set_daqdir_no_scan
+    comment "sync ct completed"
+
+
+}'
+
+
+
+def sync_ct_abort '{
+    aux_trigger_off
+    # reset burst mode
+    sync_pulse_comm("BURM 0")
+    sleep(0.1)
+    sync_pulse_comm("BURM 1")
+    sync_user_abort
+    sync_user_scan_tail
+    comment "Scan aborted."
+}'
+
