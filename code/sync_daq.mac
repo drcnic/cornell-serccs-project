@@ -120,9 +120,11 @@ def sync_log_off '{
 # very far-field support # MMPAD sensor
 ##########################
 
-global SYNC_VFF_MODE
+global SYNC_VFF_MODE, CHESS_DIR
 
 def _sync_vff_newfile '{
+    local dir;
+    
     _1 = sprintf("%s/%s/vff", DAQROOT, DAQID)
     if (!file_info(_1, "-d")){
         unix(sprintf("mkdir -p %s", _1))
@@ -130,17 +132,20 @@ def _sync_vff_newfile '{
     } else {
         printf("Directory already exists at: %s\n", _1);
     }
+
+    if (MMPAD["save_local"] == 0) {
+        dir = sprintf("%s/%s/vff", "/home/padme/data/currentdaq", DAQID);
+        CHESS_PATH = _1;
+    } else {
+        dir = sprintf("%s", "/home/padme/data");
+        CHESS_PATH = "/mnt/padme/data";
+    }
+
+    _mmpad_set_path(dir)
 }'
 
-
 def _sync_vff_abort '{
-    # for mmpad:
-    #   what should go in here?
-    #   may need to look at camserver
-    # camserver("reset_frame") -- forget what you were collecting, reset
-    # ctrl+c
-    
-    #camserver("ResetCam", 1);   # stops in-prog exposure, closes shutter (same as closes?), sets mmpad to idle
+    camserver("ResetCam", 1);   # stops in-prog exposure, closes shutter (same as closes?), sets mmpad to idle
                                 # line 452, camserver.c 
     camserver("padcom reset_frame", 1); # reset counters that track acquired and expected frames 
     printf("MMPAD scan aborted.\n")
@@ -155,17 +160,22 @@ def _sync_vff_scan_head '{
     # _ctime = exposure time
     # additional frame time, set to 0
     # NPTS = n number of points
-    camserver(sprintf("set_take_n %s 0 %s", _ctime, NPTS+5), 1);    # NPTS+5: something about junk frames
-    #camserver(sprintf("exposure %s/%s/vff/vff", DAQROOT, DAQID), 1);
-    camserver(sprintf("exposure /home/padme/data/daric/vff_test"), 1);
-
-    # might need junk images to allow rams to get to speed
+    camserver(sprintf("set_take_n %s 0 %s", _ctime, NPTS+5), 1);    # NPTS+5: 
+    camserver(sprintf("exposure %s/vff", MMPAD["path"]), 1);
 }'
 
 # comment command -> logfile
 #   where last image was saved
 def _sync_vff_scan_tail '{
-    comment "MMPAD saved last image to %s" "sprintf(\"%s/%s/vff\",DAQROOT,DAQID)";
+    if (file_info( sprintf("%s/vff_x%s.raw", CHESS_PATH, NPTS+5),"-f" )) {
+        comment "Scan success! MMPAD saved last image to %s" "sprintf(\"%s/vff_x%s.raw\", CHESS_PATH, NPTS+5)";
+    } else {
+        _sync_vff_abort;
+
+        comment "***ERROR*** Scan failure: MMPAD failed to write images to %s" "sprintf(\"%s/vff_x%s.raw\", CHESS_PATH, NPTS+5)";
+        printf("You will need to re-do last scan.\n"); 
+        printf("If the problem persists, configure MMPAD to save images locally.\n");
+    }     
 }'
 
 # take dark images in here
@@ -194,10 +204,8 @@ def sync_vff_on '{
     printf("\nSetting directories for vff...\n")
    _sync_vff_newfile   
 
-    #printf("\nConfiguring vff (MMPAD) trigger mode...")
     printf("\nTurning on MMPAD...\n");
     MMPAD["hardware_trigger"] = 1;      # mmpad_on will now set mmpad to hardware trigger 
-    #MMPAD["path"] = sprint("%s/%s/vff/vff", DAQROOT, DAQID);
     _mmpad_on_new("auto");  # Configure and start mmpad with last used settings
 
     ###mmpad_resethv;
@@ -1298,15 +1306,23 @@ def sync_with_local_enable() '{
 
 
 def which_mode '{
-    if ((SYNC_FF_MODE == 1) && (SYNC_NF_MODE == 1)) {
-        p "Both modes on. Turn off one of them"
-    }
     if (SYNC_FF_MODE == 1) {
         p "FF mode"
-    } else if (SYNC_NF_MODE == 1) {
-        p "NF mode"
-    } else {
-        p "No mode"
-    }   
+    } 
 
+    if (SYNC_VFF_MODE == 1) {
+        p "VFF mode"
+    }
+    
+    if (SYNC_NF_MODE == 1) {
+        p "NF mode"
+
+        if (SYNC_VFF_MODE || SYNC_FF_MODE) {
+            p "Both FF/VFF and NF exist. Turn off one of them."
+        }
+    }
+    
+    if (!SYNC_FF_MODE && !SYNC_VFF_MODE && !SYNC_NF_MODE) {
+        p "No mode."
+    }
 }'
