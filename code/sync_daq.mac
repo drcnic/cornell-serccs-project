@@ -128,9 +128,9 @@ def _sync_vff_newfile '{
     _1 = sprintf("%s/%s/vff", DAQROOT, DAQID)
     if (!file_info(_1, "-d")){
         unix(sprintf("mkdir -p %s", _1))
-        printf("Directory created at: %s\n", _1);
+        #printf("Directory created at: %s\n", _1);
     } else {
-        printf("Directory already exists at: %s\n", _1);
+        #printf("Directory already exists at: %s\n", _1);
     }
 
     if (MMPAD["save_local"] == 0) {
@@ -160,13 +160,15 @@ def _sync_vff_scan_head '{
     # _ctime = exposure time
     # additional frame time, set to 0
     # NPTS = n number of points
-    camserver(sprintf("set_take_n %s 0 %s", _ctime, NPTS+5), 1);    # NPTS+5: 
+    camserver(sprintf("set_take_n %s 0 %s", _ctime, NPTS+5), 1);    # NPTS+5: slew_ome sends 5 extra hw trigger pulses -- sync_ct adds 1 extra pulse -- which frame is junk?
     camserver(sprintf("exposure %s/vff", MMPAD["path"]), 1);
 }'
 
 # comment command -> logfile
 #   where last image was saved
 def _sync_vff_scan_tail '{
+    sleep(30);
+    
     if (file_info( sprintf("%s/vff_x%s.raw", CHESS_PATH, NPTS+5),"-f" )) {
         comment "Scan success! MMPAD saved last image to %s" "sprintf(\"%s/vff_x%s.raw\", CHESS_PATH, NPTS+5)";
     } else {
@@ -235,13 +237,13 @@ def sync_vff_on '{
 	    set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
             umv nfy NFY_FURN_OUT
             umv nfx NFX_FURN_OUT
-            umv ome 0
+            #umv ome 0
         } else {
             set_lm nfy NFY_LOW NFY_HIGH   #rams set-up         
 	    
             umv nfy 15 
             umv nfx NFX_OUT 
-            umv ome 0
+            #umv ome 0
 
 	    #umv nfxm 35 #mobile set-up
         }
@@ -275,9 +277,16 @@ def sync_vff_on '{
 
 def sync_vff_off '{
     printf("\nRemoving vff scan parameters...")
-    cdef("", "", "_sync_vff_", "delete")
-    printf("\nClosing garage door...")
-    close_garage_door
+    cdef("", "", "_sync_vff_", "delete")    # vff-specific macros no longer chained onto scan macros
+    
+
+    if (!SYNC_FF_MODE) {
+        printf("\nClosing garage door...")
+        close_garage_door
+    } else {
+        printf("\nFF mode on. Keeping garage door open.")
+    }
+
     #printf("\nSetting sync_vff mode to 0...")
     SYNC_VFF_MODE = 0    
     comment "vff is off"
@@ -463,17 +472,17 @@ def sync_ff_on '{
     if (NF_EXISTS == 1) {                
         printf("\n nf setup exists. Moving nf camera and ome in place for ff measurements...")
         if (FURNACE_ON == 1) {
-	    printf("\nfurnace is on, moving into furnace position...\n")    	
-	    set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
-            umv nfy NFY_FURN_OUT
-            umv nfx NFX_FURN_OUT
-            umv ome 0
+	        printf("\nfurnace is on, moving into furnace position...\n")    	
+	        #set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
+            #umv nfy NFY_FURN_OUT
+            #umv nfx NFX_FURN_OUT
+            #umv ome 0
         } else {
-            set_lm nfy NFY_LOW NFY_HIGH   #rams set-up         
+            #set_lm nfy NFY_LOW NFY_HIGH   #rams set-up         
 	    
-            umv nfy 15 
-            umv nfx NFX_OUT 
-            umv ome 0
+            #umv nfy 15 
+            #umv nfx NFX_OUT 
+            #umv ome 0
 
 	    #umv nfxm 35 #mobile set-up
         }
@@ -485,13 +494,16 @@ def sync_ff_on '{
     #printf("\nMoving cave slits...") #w2 x-1.5 is good
     #umv cslitw 7
     #umv cslitx -3.5
+    printf("\ncloses...")
     closes
+    printf("\nfind foil....")
     find_foil 
     #printf("\nSetting ion chamber gains...")
     #set_ic_gain ic0 14
     #set_ic_gain ic1 10
     #set_ic_gain ic2 10
     #set_ic_gain ic3 10
+    printf("\nsr570 log...")
     _sr570_log
     printf("\nOpening garage door...")
     open_garage_door
@@ -512,10 +524,16 @@ def sync_ff_off '{
         epics_put("GE2:cam1:TriggerMode", 2)
     }
 
+    if (!SYNC_VFF_MODE) {
+        printf("\nClosing garage door...")
+        close_garage_door
+    } else {
+        printf("\nVFF mode on. Keeping garage door open.")
+    }
+
     printf("\nRemoving ff scan parameters...")
     cdef("", "", "_sync_ff_", "delete")
-    printf("\nClosing garage door...")
-    close_garage_door
+
     #printf("\nSetting sync_ff mode to 0...")
     SYNC_FF_MODE = 0
     comment "ff is off"
@@ -836,12 +854,12 @@ def sync_nf_off '{
 	set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
         umv nfy NFY_FURN_OUT
         umv nfx NFX_FURN_OUT
-        umv ome 0
+        #umv ome 0
     } else {
 	#set_lm nfy NFY_LOW NFY_HIGH #rams set-up	 			
         umv nfy 15 
         umv nfx NFX_OUT 
-        umv ome 0
+        #umv ome 0
 
 	#umv nfxm 35 #mobile set-up
     } 
@@ -1086,13 +1104,13 @@ def sync_tomo_off '{
 	set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
         umv nfy NFY_FURN_OUT
         umv nfx NFX_FURN_OUT
-        umv ome 0
+        #umv ome 0
     } else {
 	#set_lm nfy NFY_LOW NFY_HIGH #rams set-up	 		
 	
         umv nfy 15 
         umv nfx NFX_OUT 
-        umv ome 0
+        #umv ome 0
 
 	#umv nfxm 35 #mobile set-up
     }
@@ -1326,3 +1344,4 @@ def which_mode '{
         p "No mode."
     }
 }'
+

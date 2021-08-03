@@ -360,12 +360,19 @@ def mmpad_dark '{
 
     MMPAD["dark_file"] = sprintf("%s/%s", MMPAD["path"], darkfile)
 
+    # Camserver bugs out if you try to take dark frames with hardware trigger
+    # So, set software trigger
+    print "setting software trigger mode for dark frames"
+    camserver("padcom settrigger 4 0 0",0.1)                          
+
     camserver("mmpadcommand milbacksub 0", 0.1)
     camserver(sprintf("set_take_n %f 0 %d", MMPAD["exposure_time"], darkframes), 0.1)
     camserver(sprintf("setavgexp %s %d", MMPAD["dark_file"], darkframes), 0.1)
     camserver(sprintf("exposure %s %d", MMPAD["dark_file"], darkframes), (MMPAD["exposure_time"])*darkframes*1.5+5)
     camserver(sprintf("mmpadcommand milbackimg %s_avg.tif", MMPAD["dark_file"]), 1)
     camserver("mmpadcommand milbacksub 1", 0.1)
+
+    _mmpad_set_trigger(MMPAD["hardware_trigger"])   # set trigger mode back to whatever it was before taking darkframes
 }'
 
 #define MMPAD ROIs:
@@ -659,9 +666,9 @@ def mmpad_server_setup '{
 def _mmpad_set_trigger(var) '{
     #set trigger mode:
     #10/2018 updated the camserver command for setting trigger mode
-    if (var == "software") {
+    if (var == "software" || var == 0) {
         MMPAD["hardware_trigger"] = 0;
-    } else if (var == "hardware") {
+    } else if (var == "hardware" || var == 1) {
         MMPAD["hardware_trigger"] = 1;
     } else {
         MMPAD["hardware_trigger"] = yesno("Enable hardware trigger?", MMPAD["hardware_trigger"]);
@@ -756,7 +763,7 @@ def mmpad_on_new '{
     _mmpad_on_new("$1");
 }'
 
-# Prints all MMPAD state values to console
+# Prints all MMPAD state values to console, and highlights some important values
 def mmpad_status '{
     print MMPAD;
 }'
