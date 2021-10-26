@@ -1,0 +1,69 @@
+def _slew_set(ctime, points) '{
+
+        # set external rising trigger
+        if (sync_pulse_comm("TSRC?") != 1)
+            sync_pulse_comm("TSRC 1")
+        # set burst mode on
+        if (sync_pulse_comm("BURM?") != 1)
+            sync_pulse_comm("BURM 1")
+        # set burst mode period
+        if (sync_pulse_comm("BURP?") != ctime)
+            sync_pulse_comm(sprintf("BURP %g", ctime))
+        # set burst mode count
+        if (sync_pulse_comm("BURC?") != points)
+            sync_pulse_comm(sprintf("BURC %d", points))
+        # set burst delay to 0
+        if (sync_pulse_comm("BURD?") != ctime)
+            sync_pulse_comm(sprintf("BURD %g", ctime))
+        # set the delay on channel AB to 0
+        if (sync_pulse_comm("DLAY? 2") != "0,+0.000000000000")
+            sync_pulse_comm("DLAY 2,0,0")
+        # set the duration on channel AB to 50 ms
+        if (sync_pulse_comm("DLAY? 3") != "2,+0.050000000000")
+            sync_pulse_comm("DLAY 3,2,50e-3")
+        # set the level on channel AB to 3.5 V
+        if (sync_pulse_comm("LAMP? 1") != 3.5)
+            sync_pulse_comm("LAMP 1,3.5")
+}'
+
+
+def pulse_pos '{
+    #Shift 3 + Shift 8 on the delay generator
+    if (sync_pulse_comm("LPOL? 1") != 1) {
+        sync_pulse_comm("LPOL 1,1")
+    }
+    if (sync_pulse_comm("LPOL? 1") != 1) {
+        sync_pulse_comm("LPOL 1,1")
+    }
+
+}'
+
+
+def pulse_neg '{
+    #Shift 3 + Shift 9 on the delay generator
+    if (sync_pulse_comm("LPOL? 1") != 0) {
+        sync_pulse_comm("LPOL 1,0")
+    }
+    if (sync_pulse_comm("LPOL? 1") != 0) {
+        sync_pulse_comm("LPOL 1,0")
+    }
+
+}'
+
+def pulse_test '{
+    if ($# != 2) {
+        eprint "Usage: pulse_test points ctime"
+        exit
+    }
+    aux_trigger_off
+    sleep(0.1)
+    _slew_set($2, $1)
+    sleep(0.1)
+    aux_trigger_on
+    p "Sending triggers..."
+    sleep($1*$2)
+    sleep(0.1)
+    aux_trigger_off
+    p "End of triggers..."
+}'
+

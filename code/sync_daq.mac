@@ -120,11 +120,15 @@ def sync_log_off '{
 # very far-field support # MMPAD sensor
 ##########################
 
-global SYNC_VFF_MODE, CHESS_DIR
+# SYNC_VFF_MODE var is true or false to indicate whether vff mode is on or not
+# CHESS_PATH var is the scan directory from Chess computer perspective
+# PADME_PATH var is the scan directory to be written to, from the MMPAD perspective
+# PADME_PATH var is the scan directory that darkfiles are to be saved, from the MMPAD perspective
+global SYNC_VFF_MODE, CHESS_PATH, PADME_PATH, PADME_PATH_SNAPSHOTS
+
+
 
 def _sync_vff_newfile '{
-    local dir;
-    
     _1 = sprintf("%s/%s/vff", DAQROOT, DAQID)
     if (!file_info(_1, "-d")){
         unix(sprintf("mkdir -p %s", _1))
@@ -134,14 +138,16 @@ def _sync_vff_newfile '{
     }
 
     if (MMPAD["save_local"] == 0) {
-        dir = sprintf("%s/%s/vff", "/home/padme/data/currentdaq", DAQID);
+        PADME_PATH = sprintf("%s/%s/vff", "/home/padme/data/currentdaq", DAQID);
+        PADME_PATH_SNAPSHOTS = sprintf("%s/%s/vff", "/home/padme/data/currentdaq", SNAPSHOTID)
         CHESS_PATH = _1;
-    } else {
-        dir = sprintf("%s", "/home/padme/data");
+    } else { 
+        PADME_PATH = sprintf("%s", "/home/padme/data");
+        PADME_PATH_SNAPSHOTS = sprintf("%s", "/home/padme/data");
         CHESS_PATH = "/mnt/padme/data";
     }
 
-    _mmpad_set_path(dir)
+    _mmpad_set_path(PADME_PATH)
 }'
 
 def _sync_vff_abort '{
@@ -157,18 +163,39 @@ def _sync_vff_abort '{
 def _sync_vff_scan_head '{
     _sync_vff_newfile
 
+    # If the exposure time has changed, that means we need to take new dark frames
+    if (_ctime != MMPAD["exposure_time"]) {
+        printf("\nExposure time has changed -- new dark frames needed.\n");
+
+        local temp;
+        temp = MMPAD["path"];
+        _mmpad_set_path(PADME_PATH_SNAPSHOTS)   # set appropriate path for new darkfile
+        _mmpad_exposure_time(_ctime);           # set MMPAD["exposure_time"] to new exposure time
+
+
+        printf("\nClosing garage door and taking dark frames...");
+        closes;             # Closes fast shutter (blocks xrays from sample, last door in the hutch)
+        close_garage_door;  # Close garage door
+                            # This is additional protection against high energy harmonics
+        _mmpad_dark(mmpad_darkfile_timestamp, 20, MMPAD["exposure_time"]);   # take darkframes and turn on background subtract
+        printf("\nOpening garage door...")
+        open_garage_door
+
+
+        _mmpad_set_path(temp);  # re-set MMPAD directory for scan images
+    }
+
     # _ctime = exposure time
     # additional frame time, set to 0
     # NPTS = n number of points
-    camserver(sprintf("set_take_n %s 0 %s", _ctime, NPTS+5), 1);    # NPTS+5: slew_ome sends 5 extra hw trigger pulses -- sync_ct adds 1 extra pulse -- which frame is junk?
-    camserver(sprintf("exposure %s/vff", MMPAD["path"]), 1);
+    camserver(sprintf("set_take_n %s 0 %s", _ctime, NPTS+5), 0.1);    # NPTS+5: slew_ome sends 5 extra hw trigger pulses -- sync_ct adds 1 extra pulse -- which frame is junk?
+    camserver(sprintf("exposure %s/vff", MMPAD["path"]), 0.1);
 }'
 
-# comment command -> logfile
-#   where last image was saved
 def _sync_vff_scan_tail '{
-    sleep(30);
-    
+    sleep(5*_ctime);    # kludgey fix for NPTS+5 in _sync_vff_scan_head causing issues with sync_ct
+                        # +5 is done to handle five extra HW triggers sent to MMPAD during slew_ome
+                        # since sync_ct only sends one extra trigger as opposed to five, SPEC will check for scan completion prematurely and scan will fail
     if (file_info( sprintf("%s/vff_x%s.raw", CHESS_PATH, NPTS+5),"-f" )) {
         comment "Scan success! MMPAD saved last image to %s" "sprintf(\"%s/vff_x%s.raw\", CHESS_PATH, NPTS+5)";
     } else {
@@ -177,47 +204,28 @@ def _sync_vff_scan_tail '{
         comment "***ERROR*** Scan failure: MMPAD failed to write images to %s" "sprintf(\"%s/vff_x%s.raw\", CHESS_PATH, NPTS+5)";
         printf("You will need to re-do last scan.\n"); 
         printf("If the problem persists, configure MMPAD to save images locally.\n");
-    }     
+    }
+
+    mmpad_set_path(PADME_PATH_SNAPSHOTS);   # done with scan, so make sure manually taken images and darkfiles go into snapshot directory
 }'
 
-# take dark images in here
-# take new backgrounds (dark images) any time exposure time is changed
-#   bake this in for every time exposures are taken?
-#
-# acquire 100microseconds exposure time background frames
-#   gives a set of background frames with minimal dark current
-#   captures pedestal value 
-#
-# call mmpad_dark from mmpad_cdte.mac
-#
-# how much should additional sets of backgrounds be woven in?
-#
-# automatically 
-#   -set image path
-#   -set 100microsec exposure time FOR TAKING PLACEHOLDER DARKS
-#       - call mmpad_dark
-#           - takes background images
-#           - turns on automatic background subtraction
-#   -set trigger to hardware
-# 
-# does mmpad_on need to be done before dark images?
+# turn on the MM-PAD and configure the scans
 def sync_vff_on '{
     printf("\n***Remember to use appropriate attenuation***\n")
     printf("\nSetting directories for vff...\n")
    _sync_vff_newfile   
 
     printf("\nTurning on MMPAD...\n");
-    MMPAD["hardware_trigger"] = 1;      # mmpad_on will now set mmpad to hardware trigger 
+    #MMPAD["hardware_trigger"] = 1;      # mmpad_on will now set mmpad to hardware trigger 
     _mmpad_on_new("auto");  # Configure and start mmpad with last used settings
 
     ###mmpad_resethv;
 
     printf("\nClosing garage door and taking dark frames...");
-    MMPAD["exposure_time"] = 0.0001;    # 100 microsec exposure time for darkimages
     closes;             # Closes fast shutter (blocks xrays from sample, last door in the hutch)
     close_garage_door;  # Close garage door
                         # This is additional protection against high energy harmonics
-    mmpad_dark "darkfile" 20;   # take darkframes and turn on background subtract
+    _mmpad_dark(mmpad_darkfile_timestamp, 20, MMPAD["exposure_time"]);   # take darkframes and turn on background subtract
     printf("\nOpening garage door...")
     open_garage_door
     
@@ -237,13 +245,13 @@ def sync_vff_on '{
 	    set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
             umv nfy NFY_FURN_OUT
             umv nfx NFX_FURN_OUT
-            #umv ome 0
+            umv ome 0
         } else {
             set_lm nfy NFY_LOW NFY_HIGH   #rams set-up         
 	    
             umv nfy 15 
             umv nfx NFX_OUT 
-            #umv ome 0
+            umv ome 0
 
 	    #umv nfxm 35 #mobile set-up
         }
@@ -473,16 +481,16 @@ def sync_ff_on '{
         printf("\n nf setup exists. Moving nf camera and ome in place for ff measurements...")
         if (FURNACE_ON == 1) {
 	        printf("\nfurnace is on, moving into furnace position...\n")    	
-	        #set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
-            #umv nfy NFY_FURN_OUT
-            #umv nfx NFX_FURN_OUT
-            #umv ome 0
+	        set_lm nfy NFY_FURN_LOW NFY_FURN_HIGH	
+            umv nfy NFY_FURN_OUT
+            umv nfx NFX_FURN_OUT
+            umv ome 0
         } else {
-            #set_lm nfy NFY_LOW NFY_HIGH   #rams set-up         
+            set_lm nfy NFY_LOW NFY_HIGH   #rams set-up         
 	    
-            #umv nfy 15 
-            #umv nfx NFX_OUT 
-            #umv ome 0
+            umv nfy 15 
+            umv nfx NFX_OUT 
+            umv ome 0
 
 	    #umv nfxm 35 #mobile set-up
         }

@@ -195,4 +195,3 @@ def sync_ct_abort '{
     sync_user_scan_tail
     comment "Scan aborted."
 }'
-
